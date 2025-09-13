@@ -53,7 +53,7 @@ Este projeto foi idealizado e desenvolvido pela equipe **W4B - Web Four Bytes**,
 
 ## 🤝 Equipe W4B - Web Four Bytes
 
-- 👨‍💻 PEDRO AUGUSTO, LARYSSA REBECA , CAROLINA VITORIA E LETICIA MIRANDA
+- 👨‍💻 PEDRO AUGUSTO, LARYSSA REBECCA , CAROLINA VITORIA , LETICIA MIRANDA E GABRIELLA SANTANA
 
 ---
 
