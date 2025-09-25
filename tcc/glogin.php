@@ -69,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <img src="imagem/logo.png" alt="Logo Imobi Central" class="w-40 mx-auto drop-shadow-md">
     </div>
     <div id="loginBox" class="bg-gray-800/90 p-9 rounded-2xl max-w-md mx-auto shadow-xl animate-slideUp">
-        <h2 class="text-xl text-gray-100 font-semibold mb-6">Login - Área de Gestãof</h2>
+        <h2 class="text-xl text-gray-100 font-semibold mb-6">Login - Área de Gestão</h2>
         <form method="POST" class="space-y-4">
             <input type="text" name="usuario" placeholder="Usuário" required 
                    class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500">

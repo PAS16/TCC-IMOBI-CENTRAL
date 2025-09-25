@@ -82,15 +82,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Upload de novas imagens
     if (!empty($_FILES['novas_imagens']['name'][0])) {
-        $uploadDir = "../uploads/";
-        if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
+        $uploadDir = "uploads/imoveis_pendentes/"; // <-- só caminho relativo para o navegador
+        if (!is_dir("../" . $uploadDir)) mkdir("../" . $uploadDir, 0777, true);
 
         foreach ($_FILES['novas_imagens']['tmp_name'] as $key => $tmp) {
             $nomeOriginal = $_FILES['novas_imagens']['name'][$key];
-            $destino = $uploadDir . uniqid() . "_" . basename($nomeOriginal);
-            if (move_uploaded_file($tmp, $destino)) {
+            $ext = pathinfo($nomeOriginal, PATHINFO_EXTENSION);
+            $nomeUnico = uniqid() . "." . $ext;
+
+            $destinoFS = "../" . $uploadDir . $nomeUnico; // caminho físico
+            $destinoBanco = $uploadDir . $nomeUnico;     // caminho salvo no banco (sem ../)
+
+            if (move_uploaded_file($tmp, $destinoFS)) {
                 $stmtInsertImg = $conn->prepare("INSERT INTO IMAGEM_IMOVEL (IMOVEL_idIMOVEL, caminho, nome_original) VALUES (?, ?, ?)");
-                $stmtInsertImg->bind_param("iss", $idImovelNovo, $destino, $nomeOriginal);
+                $stmtInsertImg->bind_param("iss", $idImovelNovo, $destinoBanco, $nomeOriginal);
                 $stmtInsertImg->execute();
             }
         }
@@ -202,7 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="grid grid-cols-2 gap-4">
             <?php foreach ($imagens as $img): ?>
                 <div class="relative">
-                    <img src="<?= htmlspecialchars($img['caminho']) ?>" alt="" class="rounded-lg shadow">
+                    <img src="<?= htmlspecialchars($img['caminho']) ?>" alt="Imagem do imóvel" class="rounded-lg shadow">
                     <a href="conclusaop.php?id=<?= $id ?>&remover_img=<?= $img['idIMAGEM_PENDENTE'] ?>" 
                        class="absolute top-2 right-2 bg-red-600 text-white px-2 py-1 text-xs rounded-full hover:bg-red-500">✕</a>
                 </div>
