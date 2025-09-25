@@ -1,128 +1,143 @@
 <?php
-include 'conexao.php';
+$servername = "localhost";
+$username = "root";
+$password = "";
+$dbname = "mydb";
 
-if (!isset($conn) || $conn->connect_error) {
-    die("Erro de conexão com o banco de dados: " . ($conn->connect_error ?? "Variável \$conn não definida"));
+// Criando conexão
+$conn = new mysqli($servername, $username, $password, $dbname);
+if ($conn->connect_error) {
+    die("Conexão falhou: " . $conn->connect_error);
 }
 
-// Cidade e pesquisa
-$cidade = isset($_GET['cidade']) ? $_GET['cidade'] : '';
-$pesquisa = isset($_GET['pesquisa']) ? $_GET['pesquisa'] : '';
+// ----- FILTROS -----
+$where = "WHERE 1=1"; 
 
-$sql = "SELECT i.idIMOVEL, i.descricao, i.cidade, i.qtd_quartos, i.qtd_banheiro, i.qtd_vagas, i.valor, img.caminho 
-        FROM IMOVEL i
-        LEFT JOIN IMAGEM_IMOVEL img ON i.idIMOVEL = img.IMOVEL_idIMOVEL
-        WHERE 1=1";
-
-$params = [];
-$types = "";
-
-// Filtro cidade
-if (!empty($cidade)) {
-    $sql .= " AND i.cidade = ?";
-    $params[] = $cidade;
-    $types .= "s";
+if (!empty($_GET['cidade'])) {
+    $cidade = $conn->real_escape_string($_GET['cidade']);
+    $where .= " AND cidade = '$cidade'";
 }
 
-// Pesquisa na descrição ou endereço
-if (!empty($pesquisa)) {
-    $sql .= " AND i.descricao LIKE ?";
-    $params[] = "%" . $pesquisa . "%";
-    $types .= "s";
+if (!empty($_GET['preco_min'])) {
+    $preco_min = (int) $_GET['preco_min'];
+    $where .= " AND preco >= $preco_min";
 }
 
-$stmt = $conn->prepare($sql);
-if (!$stmt) die("Erro na preparação da query: " . $conn->error);
-
-// Bind dinâmico
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
+if (!empty($_GET['preco_max'])) {
+    $preco_max = (int) $_GET['preco_max'];
+    $where .= " AND preco <= $preco_max";
 }
 
-$stmt->execute();
-$result = $stmt->get_result();
+if (!empty($_GET['quartos'])) {
+    $quartos = (int) $_GET['quartos'];
+    $where .= " AND quartos >= $quartos";
+}
 
-// Imagens de exemplo caso não haja no banco
-$imagensExemplo = [
-    "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80",
-    "https://images.unsplash.com/photo-1599423300746-b62533397364?auto=format&fit=crop&w=800&q=80",
-    "https://images.unsplash.com/photo-1568605114967-8130f3a36994?auto=format&fit=crop&w=800&q=80"
-];
+if (!empty($_GET['banheiros'])) {
+    $banheiros = (int) $_GET['banheiros'];
+    $where .= " AND banheiros >= $banheiros";
+}
+
+if (!empty($_GET['vagas'])) {
+    $vagas = (int) $_GET['vagas'];
+    $where .= " AND vagas >= $vagas";
+}
+
+// Consulta imóveis
+$sql = "SELECT id, titulo, descricao, cidade, preco, quartos, banheiros, vagas 
+        FROM imovel $where ORDER BY preco ASC";
+$result = $conn->query($sql);
 ?>
 
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
-<title>Imóveis Disponíveis</title>
-<style>
-body { margin:0; font-family:Arial,sans-serif; background:#2f2f2f; color:#fff; }
-header { background:#1f1f1f; padding:20px; display:flex; justify-content: space-between; align-items:center; }
-header h1 { margin:0; font-size:1.8em; }
-header form { display:flex; gap:10px; }
-header input[type="text"], header select { padding:10px; border-radius:8px; border:none; font-size:1em; }
-header button { padding:10px 15px; border-radius:8px; border:none; background:#00bcd4; color:white; cursor:pointer; }
-header button:hover { background:#0097a7; }
-
-.container { display:flex; flex-wrap:wrap; justify-content:center; gap:30px; padding:20px; }
-
-.card { background:#3a3a3a; border-radius:15px; overflow:hidden; width:350px; transition: transform 0.3s; }
-.card:hover { transform:translateY(-8px); }
-.card img { width:100%; height:220px; object-fit:cover; }
-.card-content { background:#262626; padding:15px; text-align:left; }
-.card-content h3 { margin:0 0 10px 0; font-size:1.2em; }
-.card-content p { margin:5px 0; font-size:0.95em; color:#ccc; }
-.card-icons { display:flex; gap:15px; margin-top:10px; color:#fff; font-size:0.9em; }
-.card-icons span { display:flex; align-items:center; gap:5px; }
-.card-content .valor { margin-top:10px; font-weight:bold; font-size:1.1em; }
-.card-content button { margin-top:10px; width:100%; padding:10px; background:#00bcd4; border:none; border-radius:8px; color:white; cursor:pointer; }
-.card-content button:hover { background:#0097a7; }
-</style>
+  <meta charset="UTF-8">
+  <title>Imóveis</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
+<body class="bg-gray-800 text-white">
 
-<header>
-    <h1>IMÓVEIS DISPONÍVEIS</h1>
-    <form method="GET">
-        <input type="text" name="pesquisa" placeholder="Pesquisar..." value="<?php echo htmlspecialchars($pesquisa); ?>">
-        <select name="cidade">
-            <option value="">Todas as cidades</option>
-            <option value="Praia Grande" <?php if($cidade=='Praia Grande') echo 'selected'; ?>>Praia Grande</option>
-            <option value="Mongaguá" <?php if($cidade=='Mongaguá') echo 'selected'; ?>>Mongaguá</option>
-            <option value="Itanhaém" <?php if($cidade=='Itanhaém') echo 'selected'; ?>>Itanhaém</option>
-        </select>
-        <button type="submit">Pesquisar</button>
-    </form>
-</header>
+<div class="p-6">
 
-<div class="container">
-<?php 
-if ($result && $result->num_rows > 0) {
-    $i = 0;
-    while ($row = $result->fetch_assoc()) { 
-        $imgSrc = !empty($row['caminho']) ? $row['caminho'] : $imagensExemplo[$i % count($imagensExemplo)];
-        $i++;
-?>
-    <div class="card">
-        <img src="<?php echo $imgSrc; ?>" alt="Imagem do imóvel">
-        <div class="card-content">
-            <h3><?php echo htmlspecialchars($row['descricao']); ?></h3>
-            <p><?php echo strtoupper(htmlspecialchars($row['cidade'])); ?></p>
-            <div class="card-icons">
-                <span>🛏 <?php echo $row['qtd_quartos'] ?? 0; ?> Quartos</span>
-                <span>🛁 <?php echo $row['qtd_banheiro'] ?? 0; ?> Banheiros</span>
-                <span>🚗 <?php echo $row['qtd_vagas'] ?? 0; ?> Vagas</span>
-            </div>
-            <div class="valor">R$ <?php echo number_format($row['valor'] ?? 0,2,",","."); ?></div>
-            <button>EXIBIR</button>
-        </div>
+    <!-- Botão para abrir filtros -->
+    <button onclick="document.getElementById('overlayFiltro').style.display='flex'" 
+    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg">
+        Filtros
+    </button>
+
+    <h1 class="text-2xl font-bold my-4">Lista de Imóveis</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <?php
+        if ($result->num_rows > 0) {
+            while($row = $result->fetch_assoc()) {
+                echo "
+                <div class='bg-gray-900 p-4 rounded-xl shadow-lg'>
+                    <h2 class='text-xl font-semibold mb-2'>".$row['titulo']."</h2>
+                    <p class='text-sm text-gray-300 mb-2'>".$row['descricao']."</p>
+                    <p><strong>Cidade:</strong> ".$row['cidade']."</p>
+                    <p><strong>Preço:</strong> R$ ".number_format($row['preco'], 2, ',', '.')."</p>
+                    <p><strong>Quartos:</strong> ".$row['quartos']."</p>
+                    <p><strong>Banheiros:</strong> ".$row['banheiros']."</p>
+                    <p><strong>Vagas:</strong> ".$row['vagas']."</p>
+                </div>
+                ";
+            }
+        } else {
+            echo "<p>Nenhum imóvel encontrado.</p>";
+        }
+        ?>
     </div>
-<?php 
-    }
-} else {
-    echo "<p style='color:#ccc;'>Nenhum imóvel encontrado.</p>";
-}
-?>
+</div>
+
+<!-- Overlay de Filtros -->
+<div id="overlayFiltro" class="fixed inset-0 bg-black bg-opacity-70 hidden justify-center items-center z-50">
+    <div class="bg-gray-900 p-8 rounded-2xl w-[400px] shadow-lg relative text-white">
+
+        <!-- Botão fechar -->
+        <button onclick="document.getElementById('overlayFiltro').style.display='none'" 
+        class="absolute top-3 right-3 text-white text-xl">&times;</button>
+
+        <h2 class="text-xl font-bold mb-6 text-center">Filtrar Imóveis</h2>
+
+        <form method="GET" action="buscar_imoveis.php" class="space-y-4">
+
+            <!-- Cidade -->
+            <label class="block">Cidade</label>
+            <select name="cidade" class="w-full p-2 rounded bg-gray-800 text-white">
+                <option value="">Todos os imóveis</option>
+                <?php
+                $sqlCidades = "SELECT DISTINCT cidade FROM imovel ORDER BY cidade";
+                $resultCidades = $conn->query($sqlCidades);
+                while ($rowCidade = $resultCidades->fetch_assoc()) {
+                    $selected = (isset($_GET['cidade']) && $_GET['cidade'] == $rowCidade['cidade']) ? "selected" : "";
+                    echo "<option value='".$rowCidade['cidade']."' $selected>".$rowCidade['cidade']."</option>";
+                }
+                ?>
+            </select>
+
+            <!-- Preço -->
+            <div class="flex gap-2">
+                <input type="number" name="preco_min" value="<?= $_GET['preco_min'] ?? '' ?>" placeholder="Preço mín" class="w-1/2 p-2 rounded bg-gray-800 text-white">
+                <input type="number" name="preco_max" value="<?= $_GET['preco_max'] ?? '' ?>" placeholder="Preço máx" class="w-1/2 p-2 rounded bg-gray-800 text-white">
+            </div>
+
+            <!-- Quartos -->
+            <input type="number" name="quartos" value="<?= $_GET['quartos'] ?? '' ?>" placeholder="Quantidade de quartos" class="w-full p-2 rounded bg-gray-800 text-white">
+
+            <!-- Banheiros -->
+            <input type="number" name="banheiros" value="<?= $_GET['banheiros'] ?? '' ?>" placeholder="Quantidade de banheiros" class="w-full p-2 rounded bg-gray-800 text-white">
+
+            <!-- Vagas -->
+            <input type="number" name="vagas" value="<?= $_GET['vagas'] ?? '' ?>" placeholder="Quantidade de vagas" class="w-full p-2 rounded bg-gray-800 text-white">
+
+            <!-- Botão aplicar -->
+            <button type="submit" class="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold">
+                Aplicar Filtros
+            </button>
+        </form>
+    </div>
 </div>
 
 </body>

@@ -108,10 +108,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body class="bg-gray-900 text-gray-100 font-sans min-h-screen flex flex-col">
 
-<!-- Navbar -->
+<!-- Navbar (ajustada, sem "Meus Imóveis") -->
 <nav class="bg-gray-800 p-4 flex justify-center gap-4 sticky top-0 z-50">
   <button onclick="location.href='index.php'" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-semibold">INÍCIO</button>
-  <button onclick="location.href='meus_imoveis.php'" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-semibold">MEUS IMÓVEIS</button>
   <button onclick="location.href='suporte.php'" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-semibold">SUPORTE</button>
 </nav>
 

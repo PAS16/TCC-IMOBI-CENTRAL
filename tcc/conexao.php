@@ -1,7 +1,7 @@
 <?php
 $servername = "localhost";
 $username = "root";
-$password = "root";
+$password = "admin";
 $dbname = "mydb";
 
 // Criando conexão
@@ -12,3 +12,4 @@ if ($conn->connect_error) {
     die("Conexão falhou: " . $conn->connect_error);
 }
 ?>
+1

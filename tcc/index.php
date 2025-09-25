@@ -2,7 +2,7 @@
 // Conexão com o banco de dados mydb
 $host = "localhost";
 $user = "root"; // seu usuário
-$pass = "root"; // sua senha
+$pass = "admin"; // sua senha
 $db   = "mydb";
 
 $conn = new mysqli($host, $user, $pass, $db);
@@ -135,7 +135,7 @@ function toggleMenu() {
     <a href="escolhacd.php" class="w-11/12 text-center py-2 px-4 bg-gradient-to-br from-zinc-800 to-zinc-600 text-white font-semibold rounded-lg shadow hover:scale-105 transition">
       COMPRE UMA CASA
     </a>
-    <a href="loginstaff.php" class="w-11/12 text-center py-2 px-4 bg-gradient-to-br from-zinc-800 to-zinc-600 text-white font-semibold rounded-lg shadow hover:scale-105 transition">
+    <a href="glogin.php" class="w-11/12 text-center py-2 px-4 bg-gradient-to-br from-zinc-800 to-zinc-600 text-white font-semibold rounded-lg shadow hover:scale-105 transition">
       GESTOR
     </a>
   </div>
