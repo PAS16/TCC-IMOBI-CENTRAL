@@ -4,7 +4,7 @@ session_start();
 // --- Conexão com o banco ---
 $host = "localhost";
 $user = "root";
-$pass = "admin";
+$pass = "root";
 $db   = "mydb";
 
 $conn = new mysqli($host, $user, $pass, $db);
