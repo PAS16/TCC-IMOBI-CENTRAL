@@ -70,55 +70,96 @@ while($r=$res->fetch_assoc()) $imoveis[$r['idIMOVEL']]=$r['descricao'];
 <title>Gerenciar Visitas</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+/* ===== Estilo igual ao painel de Proprietários ===== */
+@keyframes fadeInPage { from {opacity:0;transform:translateY(20px);} to {opacity:1;transform:translateY(0);} }
+.fade-in-page { animation: fadeInPage 0.6s ease-in-out; }
+
+body::before {
+    content:"";position:fixed;top:0;left:0;right:0;bottom:0;
+    background:linear-gradient(135deg,#111111,#1a1a1a,#222233,#1a1a1a);
+    background-size:400% 400%;
+    animation:gradientMove 20s ease infinite;
+    z-index:-2;
+}
+@keyframes gradientMove {0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%;}}
+
+.particle {position:absolute;border-radius:50%;background:rgba(255,255,255,0.03);pointer-events:none;z-index:-1;animation:floatParticle linear infinite;}
+@keyframes floatParticle {0%{transform:translateY(0) translateX(0) scale(0.5);opacity:0;}10%{opacity:0.2;}100%{transform:translateY(-800px) translateX(200px) scale(1);opacity:0;}}
+
+.btn-glow {position:relative;transition:all 0.3s ease;background:#1f1f2f;color:#e0e0e0;font-bold;}
+.btn-glow::before {content:'';position:absolute;top:-2px;left:-2px;right:-2px;bottom:-2px;background:linear-gradient(45deg,#2a2a3f,#3a3a5a,#2a2a3f,#3a3a5a);border-radius:inherit;filter:blur(6px);opacity:0;transition:opacity 0.3s ease;z-index:-1;}
+.btn-glow:hover {background:#2c2c44;}
+.btn-glow:hover::before {opacity:1;}
+
+.card-dynamic {box-shadow:0 10px 25px rgba(0,0,0,0.6);transition:transform 0.3s ease, box-shadow 0.3s ease;}
+.card-dynamic:hover {transform:translateY(-5px);box-shadow:0 20px 40px rgba(0,0,0,0.8);}
+
+.title-glow {text-shadow:0 0 6px rgba(255,255,255,0.3);}
+</style>
 </head>
-<body class="bg-zinc-900 text-gray-100 min-h-screen p-8 font-serif">
+<body class="font-serif text-gray-100 min-h-screen relative overflow-hidden">
 
-<div class="max-w-7xl mx-auto">
-    <h2 class="text-3xl font-bold mb-6 text-center">Gerenciar Visitas</h2>
+<?php for($i=0;$i<25;$i++): ?>
+<div class="particle" style="width:<?=rand(5,15)?>px;height:<?=rand(5,15)?>px;top:<?=rand(0,100)?>%;left:<?=rand(0,100)?>%;animation-duration:<?=rand(20,40)?>s;animation-delay:<?=rand(0,20)?>s;"></div>
+<?php endfor; ?>
 
-    <div class="flex gap-2 mb-4 flex-wrap">
-        <button onclick="abrirModal('cadastrar')" class="px-4 py-2 bg-green-600 rounded hover:bg-green-500">Cadastrar Novo</button>
-        <a href="../staffmenu.php" class="px-4 py-2 bg-gray-600 rounded hover:bg-gray-500">Voltar</a>
+<div class="fade-in-page w-full px-4 py-10 flex flex-col items-center">
+  <div class="bg-[#1f1f2f]/90 backdrop-blur-md p-8 rounded-3xl w-full max-w-7xl shadow-2xl space-y-6 card-dynamic border border-[#2a2a3f]/50">
+    
+    <h2 class="text-3xl font-bold tracking-wide text-center text-gray-200 title-glow">Gerenciar Visitas</h2>
+
+    <div class="flex flex-wrap gap-4 justify-center">
+        <button onclick="abrirModal('cadastrar')" class="py-2 px-5 rounded-xl font-bold btn-glow shadow-md">Cadastrar Novo</button>
+        <a href="../staffmenu.php" class="py-2 px-5 rounded-xl font-bold btn-glow shadow-md">Voltar</a>
     </div>
 
-    <table class="w-full border-collapse text-left">
-        <tr class="bg-zinc-700">
-            <th class="p-2 border">ID</th>
-            <th class="p-2 border">Cliente</th>
-            <th class="p-2 border">Imóvel</th>
-            <th class="p-2 border">Data</th>
-            <th class="p-2 border">Observações</th>
-            <th class="p-2 border">Ações</th>
-        </tr>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse mt-4">
+        <thead>
+          <tr class="bg-[#2a2a3f]">
+            <th class="p-3 border border-[#3a3a5a]">ID</th>
+            <th class="p-3 border border-[#3a3a5a]">Cliente</th>
+            <th class="p-3 border border-[#3a3a5a]">Imóvel</th>
+            <th class="p-3 border border-[#3a3a5a]">Data</th>
+            <th class="p-3 border border-[#3a3a5a]">Observações</th>
+            <th class="p-3 border border-[#3a3a5a]">Ações</th>
+          </tr>
+        </thead>
+        <tbody>
         <?php if($resultado->num_rows>0): while($v=$resultado->fetch_assoc()): ?>
-        <tr class="bg-zinc-800 hover:bg-zinc-700">
-            <td class="p-2 border"><?= $v['id'] ?></td>
-            <td class="p-2 border"><?= htmlspecialchars($v['cliente']) ?></td>
-            <td class="p-2 border"><?= htmlspecialchars($v['imovel']) ?></td>
-            <td class="p-2 border"><?= $v['data_visita'] ?></td>
-            <td class="p-2 border"><?= htmlspecialchars($v['observacoes']) ?></td>
-            <td class="p-2 border flex gap-2">
-                <button onclick="abrirModal('editar',<?= $v['id'] ?>,<?= $v['cliente'] ?>,<?= $v['imovel'] ?>,'<?= $v['data_visita'] ?>','<?= addslashes($v['observacoes']) ?>')" class="px-2 py-1 bg-yellow-500 rounded hover:bg-yellow-400">Editar</button>
-                <button onclick="abrirModal('excluir',<?= $v['id'] ?>)" class="px-2 py-1 bg-red-600 rounded hover:bg-red-500">Excluir</button>
+          <tr class="bg-[#1f1f2f] hover:bg-[#2c2c44] transition">
+            <td class="p-3 border border-[#2a2a3f]"><?= $v['id'] ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($v['cliente']) ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($v['imovel']) ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= $v['data_visita'] ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($v['observacoes']) ?></td>
+            <td class="p-3 border border-[#2a2a3f] flex gap-2">
+              <button onclick="abrirModal('editar',<?= $v['id'] ?>,<?= $v['cliente'] ?>,<?= $v['imovel'] ?>,'<?= $v['data_visita'] ?>','<?= addslashes($v['observacoes']) ?>')" class="px-3 py-1 rounded-md font-bold btn-glow shadow-md">Editar</button>
+              <button onclick="abrirModal('excluir',<?= $v['id'] ?>)" class="px-3 py-1 rounded-md font-bold btn-glow shadow-md">Excluir</button>
             </td>
-        </tr>
+          </tr>
         <?php endwhile; else: ?>
-        <tr><td colspan="6" class="text-center p-2 border">Nenhuma visita encontrada.</td></tr>
+          <tr><td colspan="6" class="text-center p-3 border">Nenhuma visita encontrada.</td></tr>
         <?php endif; ?>
-    </table>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
 </div>
 
 <!-- Modal -->
-<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-    <div class="bg-zinc-800 p-6 rounded-2xl w-96 relative">
-        <h2 id="modal-title" class="text-xl font-bold mb-4">Título</h2>
-        <div id="modal-body"></div>
-        <div class="flex justify-end gap-2 mt-4">
-            <button onclick="fecharModal()" class="px-4 py-2 bg-gray-600 rounded hover:bg-gray-500">Cancelar</button>
-            <button id="modal-confirm" class="px-4 py-2 bg-green-600 rounded hover:bg-green-500">Confirmar</button>
-        </div>
-        <button onclick="fecharModal()" class="absolute top-2 right-2 text-gray-400 hover:text-white">&times;</button>
+<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+  <div class="bg-[#1f1f2f] p-6 rounded-2xl w-96 relative card-dynamic border border-[#2a2a3f]/50">
+    <h2 id="modal-title" class="text-xl font-bold mb-4 title-glow">Título</h2>
+    <div id="modal-body" class="space-y-2"></div>
+    <div class="flex justify-end gap-2 mt-4">
+        <button onclick="fecharModal()" class="py-2 px-4 rounded-xl font-bold btn-glow shadow-md">Cancelar</button>
+        <button id="modal-confirm" class="py-2 px-4 rounded-xl font-bold btn-glow shadow-md">Confirmar</button>
     </div>
+    <button onclick="fecharModal()" class="absolute top-2 right-2 text-gray-400 hover:text-white">&times;</button>
+  </div>
 </div>
 
 <script>
@@ -130,10 +171,10 @@ function abrirModal(tipo,id='',cliente='',imovel='',data='',obs=''){
     if(tipo==='cadastrar'){
         $('#modal-title').text('Cadastrar Visita');
         $('#modal-body').html(`
-            <select id="cliente" class="w-full p-2 mb-2 rounded bg-zinc-700">${clientes}</select>
-            <select id="imovel" class="w-full p-2 mb-2 rounded bg-zinc-700">${imoveis}</select>
-            <input type="date" id="data" class="w-full p-2 mb-2 rounded bg-zinc-700" value="${data}">
-            <textarea id="observacoes" placeholder="Observações" class="w-full p-2 mb-2 rounded bg-zinc-700"></textarea>
+            <select id="cliente" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200">${clientes}</select>
+            <select id="imovel" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200">${imoveis}</select>
+            <input type="date" id="data" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200" value="${data}">
+            <textarea id="observacoes" placeholder="Observações" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200"></textarea>
         `);
         $('#modal-confirm').off('click').click(function(){
             $.post('', {acao:'cadastrar', cliente:$('#cliente').val(), imovel:$('#imovel').val(), data:$('#data').val(), observacoes:$('#observacoes').val()}, function(res){
@@ -146,10 +187,10 @@ function abrirModal(tipo,id='',cliente='',imovel='',data='',obs=''){
         $('#modal-title').text('Editar Visita');
         $('#modal-body').html(`
             <input type="hidden" id="id" value="${id}">
-            <select id="cliente" class="w-full p-2 mb-2 rounded bg-zinc-700">${clientes}</select>
-            <select id="imovel" class="w-full p-2 mb-2 rounded bg-zinc-700">${imoveis}</select>
-            <input type="date" id="data" class="w-full p-2 mb-2 rounded bg-zinc-700" value="${data}">
-            <textarea id="observacoes" class="w-full p-2 mb-2 rounded bg-zinc-700">${obs}</textarea>
+            <select id="cliente" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200">${clientes}</select>
+            <select id="imovel" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200">${imoveis}</select>
+            <input type="date" id="data" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200" value="${data}">
+            <textarea id="observacoes" class="w-full p-2 mb-2 rounded bg-[#2a2a3f] text-gray-200">${obs}</textarea>
         `);
         $('#cliente').val(cliente); $('#imovel').val(imovel);
         $('#modal-confirm').off('click').click(function(){
@@ -172,10 +213,9 @@ function abrirModal(tipo,id='',cliente='',imovel='',data='',obs=''){
     }
 }
 
-function fecharModal(){
-    $('#modal').addClass('hidden');
-}
+function fecharModal(){ $('#modal').addClass('hidden'); }
 </script>
 
 </body>
+<?php include '../scroll.php'; ?>
 </html>

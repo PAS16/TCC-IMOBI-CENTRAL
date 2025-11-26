@@ -1,9 +1,14 @@
+<?php
+$pagina_atual = 'buscar_imoveis'; // identifica a página atual para o navbar
+include 'navbar.php';
+?>
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Encontre uma Casa</title>
+<title>Encontre um imóvel para você</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   /* Animations */
@@ -26,14 +31,14 @@
   <div class="fixed top-0 left-0 w-screen h-screen overflow-hidden pointer-events-none z-0" id="logoBackground"></div>
 
   <!-- Page Title -->
-  <h1 class="text-4xl sm:text-5xl font-semibold mb-12 text-center z-10 relative">Encontre uma Casa</h1>
+  <h1 class="text-4xl sm:text-5xl font-semibold mb-12 text-center z-10 relative">Encontre um Imóvel</h1>
 
   <!-- Cards Container -->
   <div class="flex flex-wrap justify-center gap-8 z-10 relative">
     <!-- Praia Grande -->
     <a href="buscar_imoveis.php?cidade=Praia+Grande" 
        class="bg-gray-800 rounded-2xl shadow-2xl overflow-hidden w-72 sm:w-80 cursor-pointer transform transition-all duration-300 hover:-translate-y-2 hover:shadow-3xl hover:bg-gray-700 animate-fadeUp">
-      <img src="https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80" 
+      <img src="imagem/pg.jpg" 
            alt="Praia Grande" 
            class="w-full h-44 object-cover transition-transform duration-300 hover:scale-105 border-b-2 border-gray-600">
       <div class="p-5 text-xl font-semibold text-gray-100 text-center drop-shadow-md">PRAIA GRANDE</div>
@@ -43,7 +48,7 @@
     <a href="buscar_imoveis.php?cidade=Mongaguá" 
        class="bg-gray-800 rounded-2xl shadow-2xl overflow-hidden w-72 sm:w-80 cursor-pointer transform transition-all duration-300 hover:-translate-y-2 hover:shadow-3xl hover:bg-gray-700 animate-fadeUp" 
        style="animation-delay:0.2s;">
-      <img src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80" 
+      <img src="imagem/monga.jpg" 
            alt="Mongaguá" 
            class="w-full h-44 object-cover transition-transform duration-300 hover:scale-105 border-b-2 border-gray-600">
       <div class="p-5 text-xl font-semibold text-gray-100 text-center drop-shadow-md">MONGAGUÁ</div>
@@ -53,10 +58,18 @@
     <a href="buscar_imoveis.php?cidade=Itanhaém" 
        class="bg-gray-800 rounded-2xl shadow-2xl overflow-hidden w-72 sm:w-80 cursor-pointer transform transition-all duration-300 hover:-translate-y-2 hover:shadow-3xl hover:bg-gray-700 animate-fadeUp" 
        style="animation-delay:0.4s;">
-      <img src="https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=800&q=80" 
+      <img src="imagem/itanha.png" 
            alt="Itanhaém" 
            class="w-full h-44 object-cover transition-transform duration-300 hover:scale-105 border-b-2 border-gray-600">
       <div class="p-5 text-xl font-semibold text-gray-100 text-center drop-shadow-md">ITANHAÉM</div>
+    </a>
+  </div>
+
+  <!-- Ver todos os imóveis -->
+  <div class="flex justify-center mt-10 z-10 relative">
+    <a href="buscar_imoveis.php" 
+       class="py-3 px-8 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow transition">
+      Ver todos os imóveis
     </a>
   </div>
 

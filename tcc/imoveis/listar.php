@@ -1,261 +1,703 @@
 <?php
-include '../conexao.php';
+session_start();
+if (!isset($_SESSION['idUSUARIO']) || !isset($_SESSION['tipo'])) {
+    header("Location: glogin.php");
+    exit();
+}
 
-// -------------------- Ações AJAX --------------------
-// Cadastrar
-if(isset($_POST['acao']) && $_POST['acao'] === 'cadastrar'){
-    $tipo = $_POST['tipo'] ?? '';
-    $status = $_POST['status'] ?? 'Disponivel';
-    $valor = $_POST['valor'] ?? 0;
-    $descricao = $_POST['descricao'] ?? '';
-    $proprietario = $_POST['proprietario'] ?? 0;
+include '../conexao.php'; // ajuste o caminho se necessário
 
-    if($tipo && $descricao && $proprietario){
-        $stmt = $conn->prepare("INSERT INTO IMOVEL (tipo,status,valor,descricao,PROPRIETARIO_idPROPRIETARIO) VALUES (?,?,?,?,?)");
-        $stmt->bind_param("ssdsi", $tipo, $status, $valor, $descricao, $proprietario);
-        $resultado = $stmt->execute();
-        if($resultado){
-            echo json_encode(['status'=>'sucesso']);
-        } else {
-            echo json_encode(['status'=>'erro','mensagem'=>$stmt->error]);
-        }
-    } else {
-        echo json_encode(['status'=>'erro','mensagem'=>'Campos obrigatórios faltando']);
+// Adicione esta função logo após o include 'conexao.php'
+function log_historico($conn, $tabela, $id_registro, $acao, $dados_anteriores, $dados_atuais) {
+    // ID do usuário logado na sessão
+    $usuario_id = $_SESSION['idUSUARIO'] ?? null;
+    
+    // JSON Encoder para os dados. USE O FLAG JSON_UNESCAPED_UNICODE para evitar problemas com acentuação
+    $json_anterior = json_encode($dados_anteriores, JSON_UNESCAPED_UNICODE);
+    $json_atual = json_encode($dados_atuais, JSON_UNESCAPED_UNICODE);
+    
+    // Preparar a inserção no banco
+    $sql = "INSERT INTO HISTORICO (usuario_idUSUARIO, tabela, registro_id, acao, dados_anteriores, dados_atuais)
+            VALUES (?, ?, ?, ?, ?, ?)";
+    
+    $stmt = $conn->prepare($sql);
+    
+    // Tipos de parâmetros: i (int), s (string), i (int), s (string), s (string), s (string)
+    $stmt->bind_param("isisss", 
+        $usuario_id, 
+        $tabela, 
+        $id_registro, 
+        $acao, 
+        $json_anterior, 
+        $json_atual
+    );
+    
+    // Tenta executar, mas não mata a aplicação se falhar
+    @$stmt->execute();
+    @$stmt->close();
+}
+
+// --- Endpoint AJAX interno para busca unificada (clientes, proprietarios, corretores, imoveis) ---
+if (isset($_GET['ajax_search']) && $_GET['ajax_search'] == '1') {
+    header('Content-Type: application/json; charset=utf-8');
+    $termo = trim($_GET['termo'] ?? '');
+    $out = [];
+    if ($termo !== '') {
+        // Correção: Uso de prepared statement para SELECT com UNION é complexo, mantendo mysqli_real_escape_string
+        $t = mysqli_real_escape_string($conn, $termo);
+        $sql = "
+            SELECT 'cliente' AS tipo_item, idCLIENTE AS id, nome AS nome_exibir
+            FROM CLIENTE
+            WHERE nome LIKE '%$t%' OR cpf LIKE '%$t%' OR telefone LIKE '%$t%'
+            UNION
+            SELECT 'proprietario', idPROPRIETARIO, nome
+            FROM PROPRIETARIO
+            WHERE nome LIKE '%$t%' OR cpf LIKE '%$t%' OR telefone LIKE '%$t%'
+            UNION
+            SELECT 'corretor', idCORRETOR, nome
+            FROM CORRETOR
+            WHERE nome LIKE '%$t%' OR creci LIKE '%$t%' OR telefone LIKE '%$t%'
+            UNION
+            SELECT 'imovel', idIMOVEL, IFNULL(titulo, CONCAT(tipo, ' - ', cidade)) as nome_exibir
+            FROM IMOVEL
+            WHERE (titulo IS NOT NULL AND titulo LIKE '%$t%') OR cidade LIKE '%$t%' OR bairro LIKE '%$t%' OR rua LIKE '%$t%'
+            LIMIT 40
+        ";
+        $res = $conn->query($sql);
+        if ($res) $out = $res->fetch_all(MYSQLI_ASSOC);
     }
+    echo json_encode($out);
     exit;
 }
 
-// Editar
-if(isset($_POST['acao']) && $_POST['acao']==='editar'){
-    $id = intval($_POST['id']);
-    $tipo = $_POST['tipo'] ?? '';
-    $status = $_POST['status'] ?? 'Disponivel';
-    $valor = $_POST['valor'] ?? 0;
-    $descricao = $_POST['descricao'] ?? '';
-    $proprietario = $_POST['proprietario'] ?? 0;
-
-    if($id && $tipo && $descricao && $proprietario){
-        $stmt = $conn->prepare("UPDATE IMOVEL SET tipo=?, status=?, valor=?, descricao=?, PROPRIETARIO_idPROPRIETARIO=? WHERE idIMOVEL=?");
-        $stmt->bind_param("ssdiii", $tipo, $status, $valor, $descricao, $proprietario, $id);
-        $resultado = $stmt->execute();
-        if($resultado){
-            echo json_encode(['status'=>'sucesso']);
-        } else {
-            echo json_encode(['status'=>'erro','mensagem'=>$stmt->error]);
-        }
-    } else {
-        echo json_encode(['status'=>'erro','mensagem'=>'Campos obrigatórios faltando']);
+// -------------------- Ações AJAX (cadastrar / editar / excluir / visualizar) --------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
+    $acao = $_POST['acao'];
+    
+    // funções utilitárias internas
+    function resposta($arr) {
+        // Garante que não haverá mais nada na saída.
+        ob_clean(); 
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($arr);
+        exit;
     }
-    exit;
-}
 
-// Excluir
-if(isset($_POST['acao']) && $_POST['acao']==='excluir'){
-    $id = intval($_POST['id']);
-    if($id){
+    if ($acao === 'cadastrar' || $acao === 'editar') {
+        
+        // 1. Coleta e Sanitização de Inputs
+        $id = intval($_POST['id'] ?? 0); // 0 se cadastrar, >0 se editar
+        $titulo = trim($_POST['titulo'] ?? '');
+        $proprietario = intval($_POST['proprietario'] ?? 0);
+        $tipo = trim($_POST['tipo'] ?? '');
+        $status = trim($_POST['status'] ?? 'Disponivel');
+        $rua = trim($_POST['rua'] ?? '');
+        $numero = trim($_POST['numero'] ?? '');
+        $bairro = trim($_POST['bairro'] ?? '');
+        $cidade = trim($_POST['cidade'] ?? '');
+        $estado = trim($_POST['estado'] ?? '');
+        $valor = floatval($_POST['valor'] ?? 0);
+        $descricao = trim($_POST['descricao'] ?? '');
+        $qtd_quartos = intval($_POST['qtd_quartos'] ?? 0);
+        $qtd_banheiro = intval($_POST['qtd_banheiro'] ?? 0);
+        $qtd_vagas = intval($_POST['qtd_vagas'] ?? 0);
+        
+        $negociavel = in_array($_POST['negociavel'] ?? 'Não', ['Sim','Não']) ? $_POST['negociavel'] : 'Não';
+        $financiavel = in_array($_POST['financiavel'] ?? 'Não', ['Sim','Não']) ? $_POST['financiavel'] : 'Não';
+
+        
+        if (!$proprietario || !$tipo || !$status) {
+            resposta(['status'=>'erro','mensagem'=>'Proprietário, tipo e status são obrigatórios']);
+        }
+
+        // montar types dinamicamente para bind_param
+        $types_base = 'i' . 's' .
+            str_repeat('s', 7) . 'd' . 's' . str_repeat('i', 3) . 'ss';
+        
+        $sucesso = false;
+        $id_imovel_processado = 0;
+
+        // 2. Inserção / Atualização Principal do Imóvel
+        if ($acao === 'cadastrar') {
+            $sql = "INSERT INTO IMOVEL (PROPRIETARIO_idPROPRIETARIO, titulo, tipo,status,rua,numero,bairro,cidade,estado,valor,descricao,qtd_quartos,qtd_banheiro,qtd_vagas,negociavel,financiavel)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) resposta(['status'=>'erro','mensagem'=>'Erro ao preparar INSERÇÃO: ' . $conn->error]);
+
+            $types = $types_base;
+            $stmt->bind_param($types,
+                $proprietario, $titulo, $tipo, $status, $rua, $numero, $bairro, $cidade, $estado,
+                $valor, $descricao, $qtd_quartos, $qtd_banheiro, $qtd_vagas, $negociavel, $financiavel
+            );
+            $sucesso = $stmt->execute();
+            
+            // 🔑 CAPTURA DO ID PARA O UPLOAD (Correto para CADASTRO)
+            $id_imovel_processado = $stmt->insert_id; 
+            
+            // Log do Histórico
+            if ($sucesso) {
+                 log_historico($conn, 'IMOVEL', $id_imovel_processado, 'INSERCAO', null, $_POST);
+            }
+            $stmt->close();
+            
+        } else {
+            // editar
+            $sql = "UPDATE IMOVEL SET PROPRIETARIO_idPROPRIETARIO=?, titulo=?, tipo=?, status=?, rua=?, numero=?, bairro=?, cidade=?, estado=?, valor=?, descricao=?, qtd_quartos=?, qtd_banheiro=?, qtd_vagas=?, negociavel=?, financiavel=? WHERE idIMOVEL=?";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) resposta(['status'=>'erro','mensagem'=>'Erro ao preparar ATUALIZAÇÃO: ' . $conn->error]);
+
+            $types = $types_base . 'i'; // + id (i)
+            $stmt->bind_param($types,
+                $proprietario, $titulo, $tipo, $status, $rua, $numero, $bairro, $cidade, $estado,
+                $valor, $descricao, $qtd_quartos, $qtd_banheiro, $qtd_vagas, $negociavel, $financiavel, $id
+            );
+            $sucesso = $stmt->execute();
+            
+            // 🔑 CAPTURA DO ID PARA O UPLOAD (Correto para EDIÇÃO)
+            $id_imovel_processado = $id; 
+            
+            // Log do Histórico
+            if ($sucesso) {
+                 log_historico($conn, 'IMOVEL', $id_imovel_processado, 'ATUALIZACAO', null, $_POST);
+            }
+            $stmt->close();
+        }
+
+        if (!$sucesso) {
+            // Se a inserção/atualização falhar, encerra aqui
+            resposta(['status'=>'erro','mensagem'=>'Erro de banco de dados: ' . $conn->error]);
+        }
+        
+        // -------------------------------------------------------------------------------------------------
+        // 3. BLOCO DE UPLOAD DE MÍDIAS (AJUSTADO O CAMINHO)
+        // -------------------------------------------------------------------------------------------------
+
+        // Upload de mídias (imagens/vídeos)
+        if ($id_imovel_processado > 0 && !empty($_FILES['imagens']) && !empty($_FILES['imagens']['name'][0])) {
+            
+            $allowed_img = ['jpg','jpeg','png','gif','webp'];
+            $allowed_vid = ['mp4','webm','ogg'];
+            
+            // CORREÇÃO CRÍTICA: Ajuste do caminho absoluto para upload.
+            // Isso assume que o diretório `uploads` está um nível acima do diretório do script atual.
+            $uploadDir = realpath(__DIR__ . '/../uploads/imoveis/');
+            
+            if ($uploadDir === false) {
+                 resposta(['status'=>'erro','mensagem'=>'Erro: O diretório de upload não foi encontrado. Verifique o caminho.']);
+            }
+            $uploadDir .= DIRECTORY_SEPARATOR; // Garante a barra no final
+            
+            // ATENÇÃO: Verifique o caminho relativo (web) que o navegador usa.
+            $webPathBase = '../uploads/imoveis'; 
+
+            if (!is_dir($uploadDir)) {
+                 // Tenta criar o diretório se não existir
+                 if (!mkdir($uploadDir, 0777, true)) {
+                      resposta(['status'=>'erro','mensagem'=>'Erro: Não foi possível criar o diretório de upload.']);
+                 }
+            }
+            
+            foreach ($_FILES['imagens']['tmp_name'] as $k => $tmp) {
+                if (!is_uploaded_file($tmp)) continue;
+                $origName = $_FILES['imagens']['name'][$k];
+                $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+                
+                // Ignora tipos não permitidos
+                if (!in_array($ext, array_merge($allowed_img,$allowed_vid))) continue; 
+
+                $novoNome = uniqid('m_') . '.' . $ext;
+                $dest = $uploadDir . $novoNome;
+                
+                if (move_uploaded_file($tmp, $dest)) {
+                    // O caminho salvo no banco (coluna `caminho`) DEVE ser o caminho WEB/relativo
+                    $caminhoBd = $webPathBase . $novoNome; 
+                    
+                    $stmtImg = $conn->prepare("INSERT INTO IMAGEM_IMOVEL (IMOVEL_idIMOVEL, caminho, nome_original) VALUES (?,?,?)");
+                    if ($stmtImg) {
+                        // VINCULAÇÃO CORRETA: Usa o ID que acabamos de obter ou validar.
+                        $stmtImg->bind_param("iss", $id_imovel_processado, $caminhoBd, $origName); 
+                        $stmtImg->execute();
+                        $stmtImg->close();
+                    }
+                }
+            }
+        }
+        
+        // 4. Resposta de Sucesso
+        $msg = ($acao === 'cadastrar') ? 'Imóvel cadastrado com sucesso!' : 'Imóvel atualizado com sucesso!';
+        resposta(['status'=>'sucesso','mensagem'=>$msg, 'id'=>$id_imovel_processado]);
+    } // Fim do if (cadastrar || editar)
+
+    if ($acao === 'excluir') {
+        $id = intval($_POST['id'] ?? 0);
+        if (!$id) resposta(['status'=>'erro','mensagem'=>'ID inválido']);
+        
+        // Adiciona log de histórico antes da exclusão
+        log_historico($conn, 'IMOVEL', $id, 'EXCLUSAO', ['idIMOVEL' => $id], null); 
+        
         $stmt = $conn->prepare("DELETE FROM IMOVEL WHERE idIMOVEL=?");
-        $stmt->bind_param("i",$id);
-        $resultado = $stmt->execute();
-        if($resultado){
-            echo json_encode(['status'=>'sucesso']);
-        } else {
-            echo json_encode(['status'=>'erro','mensagem'=>$stmt->error]);
-        }
-    } else {
-        echo json_encode(['status'=>'erro','mensagem'=>'ID inválido']);
+        $stmt->bind_param("i", $id);
+        $ok = $stmt->execute();
+        resposta($ok?['status'=>'sucesso','mensagem'=>'Imóvel excluído com sucesso.']:['status'=>'erro','mensagem'=>$stmt->error]);
     }
-    exit;
+
+    if ($acao === 'visualizar') {
+        // Agora este bloco executa sem que as variáveis de 'cadastrar' sejam lidas, evitando o Warning.
+        $id = intval($_POST['id'] ?? 0);
+        if (!$id) resposta(['status'=>'erro','mensagem'=>'ID inválido']);
+        
+        $stmt = $conn->prepare("SELECT i.*, p.nome as proprietario FROM IMOVEL i LEFT JOIN PROPRIETARIO p ON i.PROPRIETARIO_idPROPRIETARIO=p.idPROPRIETARIO WHERE i.idIMOVEL=?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $imovel = $stmt->get_result()->fetch_assoc();
+
+        // buscar mídias
+        $stmtM = $conn->prepare("SELECT caminho, nome_original FROM IMAGEM_IMOVEL WHERE IMOVEL_idIMOVEL=?");
+        $stmtM->bind_param("i", $id);
+        $stmtM->execute();
+        $medias = $stmtM->get_result()->fetch_all(MYSQLI_ASSOC);
+
+        if (empty($imovel)) {
+             resposta(['status'=>'erro','mensagem'=>'Imóvel não encontrado.']);
+        }
+
+        if (empty($medias)) {
+            $medias = [['caminho'=>'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80','nome_original'=>'placeholder.jpg']];
+        }
+
+        resposta(['status'=>'sucesso','imovel'=>$imovel,'medias'=>$medias]);
+    }
+
+    // fim POST actions
 }
 
-// -------------------- Buscar / Listar --------------------
-$ordem = $_GET['ordem'] ?? 'id_asc';
-$filtroStatus = $_GET['status'] ?? '';
-$pesquisaId = $_GET['id'] ?? '';
-
-switch($ordem){
-    case 'id_desc': $ordenar='i.idIMOVEL DESC'; break;
-    case 'valor_asc': $ordenar='i.valor ASC'; break;
-    case 'valor_desc': $ordenar='i.valor DESC'; break;
-    default: $ordenar='i.idIMOVEL ASC';
+// -------------------- Buscar / Listar (página normal) --------------------
+$busca = $_GET['busca'] ?? '';
+$where = '';
+if (!empty($busca)) {
+    $b = mysqli_real_escape_string($conn, $busca);
+    $where = "WHERE i.cidade LIKE '%$b%' OR p.nome LIKE '%$b%' OR i.titulo LIKE '%$b%'";
 }
 
-$filtroSQL='';
-if($filtroStatus) $filtroSQL.=" AND i.status='".mysqli_real_escape_string($conn,$filtroStatus)."'";
-if($pesquisaId!=='') $filtroSQL.=" AND i.idIMOVEL='".intval($pesquisaId)."'";
+$sql = "SELECT i.*, p.nome as proprietario FROM IMOVEL i LEFT JOIN PROPRIETARIO p ON i.PROPRIETARIO_idPROPRIETARIO=p.idPROPRIETARIO $where ORDER BY i.idIMOVEL DESC";
+$resultado = $conn->query($sql);
 
-$sql="SELECT i.*, c.nome as proprietario FROM IMOVEL i LEFT JOIN CLIENTE c ON i.PROPRIETARIO_idPROPRIETARIO=c.idCLIENTE WHERE 1=1 $filtroSQL ORDER BY $ordenar";
-$resultado=$conn->query($sql);
-
-// Buscar proprietários para select
-$propResult = $conn->query("SELECT idCLIENTE,nome FROM CLIENTE");
-$proprietarios=[];
-while($p=$propResult->fetch_assoc()) $proprietarios[$p['idCLIENTE']]=$p['nome'];
+$propResult = $conn->query("SELECT idPROPRIETARIO,nome FROM PROPRIETARIO ORDER BY nome ASC");
+$proprietarios = [];
+while ($r = $propResult->fetch_assoc()) $proprietarios[$r['idPROPRIETARIO']] = $r['nome'];
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
-<title>Gerenciar Imóveis</title>
+<meta charset="utf-8">
+<title>Gerenciamento de Imóveis</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+/* Mantive o visual similar que você usa */
+@keyframes fadeInPage { from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);} }
+.fade-in-page{animation:fadeInPage 0.6s ease-in-out;}
+body::before{content:"";position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(135deg,#111,#1a1a1a,#222233,#1a1a1a);background-size:400% 400%;animation:gradientMove 20s ease infinite;z-index:-2;}
+@keyframes gradientMove{0%{background-position:0% 50%;}50%{background-position:100% 50%;}100%{background-position:0% 50%;}}
+.particle{position:absolute;border-radius:50%;background:rgba(255,255,255,0.03);pointer-events:none;z-index:-1;animation:floatParticle linear infinite;}
+@keyframes floatParticle{0%{transform:translateY(0) translateX(0) scale(0.5);opacity:0;}10%{opacity:0.2;}100%{transform:translateY(-800px) translateX(200px) scale(1);opacity:0;}}
+.btn-glow{position:relative;transition:all 0.3s ease;background:#1f1f2f;color:#e0e0e0;}
+.btn-glow::before{content:'';position:absolute;top:-2px;left:-2px;right:-2px;bottom:-2px;background:linear-gradient(45deg,#2a2a3f,#3a3a5a,#2a2a3f,#3a3a5a);border-radius:inherit;filter:blur(6px);opacity:0;transition:opacity 0.3s ease;z-index:-1;}
+.btn-glow:hover{background:#2c2c44;}
+.btn-glow:hover::before{opacity:1;}
+.card-dynamic{box-shadow:0 10px 25px rgba(0,0,0,0.6);transition:transform 0.3s ease, box-shadow 0.3s ease;}
+.card-dynamic:hover{transform:translateY(-5px);box-shadow:0 20px 40px rgba(0,0,0,0.8);}
+.title-glow{text-shadow:0 0 6px rgba(255,255,255,0.3);}
+/* Estilo para campos desabilitados no modal 'Ver' */
+:disabled { background-color: #2a2a3f !important; opacity: 0.7; cursor: not-allowed; }
+</style>
 </head>
-<body class="bg-zinc-900 text-gray-100 min-h-screen p-8 font-serif">
+<body class="font-serif text-gray-100 min-h-screen relative overflow-hidden">
+<?php for($i=0;$i<25;$i++): ?>
+  <div class="particle" style="width:<?=rand(5,15)?>px;height:<?=rand(5,15)?>px;top:<?=rand(0,100)?>%;left:<?=rand(0,100)?>%;animation-duration:<?=rand(20,40)?>s;animation-delay:<?=rand(0,20)?>s;"></div>
+<?php endfor; ?>
 
-<div class="max-w-7xl mx-auto">
-    <h2 class="text-3xl font-bold mb-6 text-center">Gerenciar Imóveis</h2>
+<div class="fade-in-page w-full px-4 py-10 flex flex-col items-center">
+  <div class="bg-[#1f1f2f]/90 backdrop-blur-md p-8 rounded-3xl w-full max-w-6xl shadow-2xl space-y-6 card-dynamic border border-[#2a2a3f]/50">
+    <h2 class="text-3xl font-bold tracking-wide text-center text-gray-200 title-glow">Gerenciamento de Imóveis</h2>
 
-    <div class="flex gap-2 mb-4 flex-wrap">
-        <button onclick="abrirModal('cadastrar')" class="px-4 py-2 bg-green-600 rounded hover:bg-green-500">Cadastrar Novo</button>
-        <a href="../staffmenu.php" class="px-4 py-2 bg-gray-600 rounded hover:bg-gray-500">Voltar</a>
-        <form method="get" class="flex gap-2 items-center">
-            <input type="text" name="id" placeholder="Buscar por ID" value="<?= htmlspecialchars($pesquisaId) ?>" class="p-2 rounded bg-zinc-800 text-white">
-            <button type="submit" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">Buscar</button>
-        </form>
+    <div class="flex flex-wrap gap-4 justify-center mb-3">
+        <button onclick="abrirModal('cadastrar')" class="py-2 px-5 rounded-xl btn-glow shadow-md">Cadastrar Novo</button>
+        <a href="../staffmenu.php" class="py-2 px-5 rounded-xl btn-glow shadow-md">Voltar</a>
     </div>
 
-    <div class="mb-4">
-        <strong>Ordenar por:</strong>
-        <a href="?ordem=id_asc">ID ↑</a> | <a href="?ordem=id_desc">ID ↓</a> | 
-        <a href="?ordem=valor_asc">Valor ↑</a> | <a href="?ordem=valor_desc">Valor ↓</a>
-    </div>
+    <input type="text" id="search" placeholder="Procurar por título, tipo, proprietário ou cidade..." class="w-full mb-4 p-3 rounded-xl 
+  bg-[#2a2a3f] text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#3a3a5a] shadow-inner"/>
 
-    <div class="mb-4">
-        <strong>Filtrar por status:</strong>
-        <a href="?status=Disponivel">Disponível</a> | 
-        <a href="?status=Vendido">Vendido</a> | 
-        <a href="?status=Alugado">Alugado</a> | 
-        <a href="listar.php">Limpar Filtro</a>
-    </div>
-
-    <table class="w-full border-collapse text-left">
-        <tr class="bg-zinc-700">
-            <th class="p-2 border">ID</th>
-            <th class="p-2 border">Tipo</th>
-            <th class="p-2 border">Status</th>
-            <th class="p-2 border">Valor</th>
-            <th class="p-2 border">Descrição</th>
-            <th class="p-2 border">Proprietário</th>
-            <th class="p-2 border">Ações</th>
-        </tr>
-        <?php if($resultado->num_rows>0): while($linha=$resultado->fetch_assoc()): ?>
-        <tr class="bg-zinc-800 hover:bg-zinc-700">
-            <td class="p-2 border"><?= $linha['idIMOVEL'] ?></td>
-            <td class="p-2 border"><?= htmlspecialchars($linha['tipo']) ?></td>
-            <td class="p-2 border"><?= $linha['status'] ?></td>
-            <td class="p-2 border">R$ <?= $linha['valor'] ?></td>
-            <td class="p-2 border"><?= htmlspecialchars($linha['descricao']) ?></td>
-            <td class="p-2 border"><?= htmlspecialchars($linha['proprietario']) ?></td>
-            <td class="p-2 border flex gap-2">
-                <button onclick="abrirModal('editar', <?= $linha['idIMOVEL'] ?>,'<?= addslashes($linha['tipo']) ?>','<?= $linha['status'] ?>',<?= $linha['valor'] ?>,'<?= addslashes($linha['descricao']) ?>',<?= $linha['PROPRIETARIO_idPROPRIETARIO'] ?>)" class="px-2 py-1 bg-yellow-500 rounded hover:bg-yellow-400">Editar</button>
-                <button onclick="abrirModal('excluir', <?= $linha['idIMOVEL'] ?>)" class="px-2 py-1 bg-red-600 rounded hover:bg-red-500">Excluir</button>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="bg-[#2a2a3f]">
+            <th class="p-3 border border-[#3a3a5a]">ID</th>
+            <th class="p-3 border border-[#3a3a5a]">Título</th> 
+            <th class="p-3 border border-[#3a3a5a]">Tipo</th>
+            <th class="p-3 border border-[#3a3a5a]">Status</th>
+            <th class="p-3 border border-[#3a3a5a]">Valor</th>
+            <th class="p-3 border border-[#3a3a5a]">Negociável</th>
+            <th class="p-3 border border-[#3a3a5a]">Financiável</th>
+            <th class="p-3 border border-[#3a3a5a]">Proprietário</th>
+            <th class="p-3 border border-[#3a3a5a]">Cidade</th>
+            <th class="p-3 border border-[#3a3a5a]">Ações</th>
+          </tr>
+        </thead>
+        
+        <tbody>
+        <?php while($linha = $resultado->fetch_assoc()): ?>
+          <tr class="bg-[#1f1f2f] hover:bg-[#2c2c44] transition">
+            <td class="p-3 border border-[#2a2a3f]"><?= $linha['idIMOVEL'] ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($linha['titulo'] ?? 'Sem Título') ?></td> 
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($linha['tipo']) ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($linha['status']) ?></td>
+            <td class="p-3 border border-[#2a2a3f]">R$ <?= number_format($linha['valor'],2,',','.') ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($linha['negociavel'] ?? 'Não') ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($linha['financiavel'] ?? 'Não') ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($linha['proprietario']) ?></td>
+            <td class="p-3 border border-[#2a2a3f]"><?= htmlspecialchars($linha['cidade']) ?></td>
+            <td class="p-3 border border-[#2a2a3f] flex gap-2">
+              <button onclick="abrirModal('visualizar', <?= $linha['idIMOVEL'] ?>)" class="px-3 py-1 rounded-md btn-glow">Ver</button>
+              <button onclick="abrirModal('editar', <?= $linha['idIMOVEL'] ?>)" class="px-3 py-1 rounded-md btn-glow">Editar</button>
+              <button onclick="abrirModal('excluir', <?= $linha['idIMOVEL'] ?>)" class="px-3 py-1 rounded-md btn-glow">Excluir</button>
             </td>
-        </tr>
-        <?php endwhile; else: ?>
-        <tr><td colspan="7" class="text-center p-2 border">Nenhum imóvel encontrado.</td></tr>
-        <?php endif; ?>
-    </table>
+          </tr>
+        <?php endwhile; ?>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
 </div>
 
-<!-- Modal -->
-<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-    <div class="bg-zinc-800 p-6 rounded-2xl w-96 relative">
-        <h2 id="modal-title" class="text-xl font-bold mb-4">Título</h2>
-        <div id="modal-body"></div>
-        <div class="flex justify-end gap-2 mt-4">
-            <button onclick="fecharModal()" class="px-4 py-2 bg-gray-600 rounded hover:bg-gray-500">Cancelar</button>
-            <button id="modal-confirm" class="px-4 py-2 bg-green-600 rounded hover:bg-green-500">Confirmar</button>
-        </div>
-        <button onclick="fecharModal()" class="absolute top-2 right-2 text-gray-400 hover:text-white">&times;</button>
+<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+  <div class="bg-[#1f1f2f] p-6 rounded-2xl w-11/12 max-w-4xl max-h-[90vh] overflow-y-auto relative card-dynamic border border-[#2a2a3f]/50">
+    <h2 id="modal-title" class="text-xl font-bold mb-4 title-glow">Título</h2>
+    <div id="modal-body" class="space-y-2"></div>
+    <div class="flex justify-end gap-2 mt-4">
+        <button onclick="fecharModal()" class="py-2 px-4 rounded-xl btn-glow">Cancelar</button>
+        <button id="modal-confirm" class="py-2 px-4 rounded-xl btn-glow">Confirmar</button>
     </div>
+    <button onclick="fecharModal()" class="absolute top-2 right-2 text-gray-400 hover:text-white">&times;</button>
+  </div>
 </div>
 
 <script>
-function abrirModal(tipo,id='',tipoImovel='',status='Disponivel',valor=0,descricao='',proprietario=0){
+// Busca local atualizada para novos índices de coluna
+$('#search').on('input', function(){
+    let val = $(this).val().toLowerCase();
+    $('table tbody tr').each(function(){
+        // Índices atualizados: Título(2), Tipo(3), Proprietário(8), Cidade(9)
+        const title = $(this).find('td:nth-child(2)').text().toLowerCase();
+        const type = $(this).find('td:nth-child(3)').text().toLowerCase();
+        const owner = $(this).find('td:nth-child(8)').text().toLowerCase();
+        const city = $(this).find('td:nth-child(9)').text().toLowerCase();
+        
+        const textMatch = owner.indexOf(val) > -1 || city.indexOf(val) > -1 || type.indexOf(val) > -1 || title.indexOf(val) > -1;
+        $(this).toggle(textMatch);
+    });
+});
+
+// variáveis de estado para upload
+let imagensSelecionadas = [];
+
+// Constrói o formulário para 'cadastrar', 'editar' e 'visualizar'
+const buildForm = (data = {}, readOnly = false, medias = []) => {
+    // Usamos o operador de coalescência nula (??) para fornecer um valor padrão seguro
+    const pSel = data.PROPRIETARIO_idPROPRIETARIO ?? '';
+    const titulo = data.titulo ?? '';
+    const tipo = data.tipo ?? '';
+    const status = data.status ?? 'Disponivel';
+    const rua = data.rua ?? '';
+    const numero = data.numero ?? '';
+    const bairro = data.bairro ?? '';
+    const cidade = data.cidade ?? '';
+    const estado = data.estado ?? '';
+    const valor = data.valor ?? '';
+    const descricao = data.descricao ?? '';
+    const q_quartos = data.qtd_quartos ?? 0;
+    const q_banheiro = data.qtd_banheiro ?? 0;
+    const q_vagas = data.qtd_vagas ?? 0;
+    const negociavel = data.negociavel ?? 'Não';
+    const financiavel = data.financiavel ?? 'Não';
+
+    // Flag para desabilitar campos no modo 'visualizar'
+    const isDisabled = readOnly ? 'disabled' : '';
+
+    let form = `<form id="form-imovel" enctype="multipart/form-data" class="space-y-3">
+        <input type="hidden" name="id" value="${data.idIMOVEL ?? 0}">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">`;
+    
+    // Proprietário
+    form += `<div>
+        <label class="block mb-1">Proprietário</label>
+        <select name="proprietario" class="w-full p-2 rounded-xl bg-[#2a2a3f] text-gray-200" ${isDisabled}>`;
+    <?php foreach($proprietarios as $pid=>$pname): ?>
+    form += `<option value="<?= $pid ?>" ${pSel == '<?= $pid ?>' ? 'selected' : ''}><?= htmlspecialchars($pname) ?></option>`;
+    <?php endforeach; ?>
+    form += `</select></div>`;
+
+    // Título do imóvel
+    form += `<div>
+        <label class="block mb-1">Título</label>
+        <input type="text" name="titulo" value="${escapeHtml(titulo)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}>
+    </div>`;
+
+    // Tipo
+    form += `<div><label class="block mb-1">Tipo</label><input type="text" name="tipo" value="${escapeHtml(tipo)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+
+    // Status
+    form += `<div><label class="block mb-1">Status</label>
+                <select name="status" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}>
+                    <option value="Disponivel" ${status==='Disponivel'?'selected':''}>Disponível</option>
+                    <option value="Vendido" ${status==='Vendido'?'selected':''}>Vendido</option>
+                </select></div>`;
+    // Valor
+    form += `<div><label class="block mb-1">Valor</label><input type="number" step="0.01" name="valor" value="${valor}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    // Rua
+    form += `<div><label class="block mb-1">Rua</label><input type="text" name="rua" value="${escapeHtml(rua)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    // Numero
+    form += `<div><label class="block mb-1">Número</label><input type="text" name="numero" value="${escapeHtml(numero)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    // Bairro
+    form += `<div><label class="block mb-1">Bairro</label><input type="text" name="bairro" value="${escapeHtml(bairro)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    // Cidade
+    form += `<div><label class="block mb-1">Cidade</label><input type="text" name="cidade" value="${escapeHtml(cidade)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    // Estado
+    form += `<div><label class="block mb-1">Estado</label><input type="text" name="estado" value="${escapeHtml(estado)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    
+    // Negociável
+    form += `<div><label class="block mb-1">Negociável</label>
+                <select name="negociavel" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}>
+                  <option value="Sim" ${negociavel==='Sim'?'selected':''}>Sim</option>
+                  <option value="Não" ${negociavel==='Não'?'selected':''}>Não</option>
+                </select></div>`;
+    // Financiável
+    form += `<div><label class="block mb-1">Financiável</label>
+                <select name="financiavel" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}>
+                  <option value="Sim" ${financiavel==='Sim'?'selected':''}>Sim</option>
+                  <option value="Não" ${financiavel==='Não'?'selected':''}>Não</option>
+                </select></div>`;
+    
+    // Quartos
+    form += `<div><label class="block mb-1">Quartos</label><input type="number" name="qtd_quartos" value="${q_quartos}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    // Banheiros
+    form += `<div><label class="block mb-1">Banheiros</label><input type="number" name="qtd_banheiro" value="${q_banheiro}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    // Vagas
+    form += `<div><label class="block mb-1">Vagas</label><input type="number" name="qtd_vagas" value="${q_vagas}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+
+    form += `</div>`; // fim grid
+
+    // Descrição
+    form += `<div class="md:col-span-2">
+                <label class="block mb-1">Descrição</label>
+                <textarea name="descricao" rows="3" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}>${escapeHtml(descricao)}</textarea>
+            </div>`;
+    
+    // Mídias (Upload e Preview)
+    form += `<div>
+                <label class="block mb-1">Mídias</label>
+                <input type="file" id="input-imagens" name="imagens[]" multiple accept="image/*,video/*" class="w-full p-2 rounded-xl bg-[#2a2a3f]">
+                <div id="preview-imagens" class="flex flex-wrap gap-2 mt-2"></div>
+            </div>`;
+            
+    form += `</form>`;
+    $('#modal-body').html(form);
+
+    // Lógica de preview de mídias e 'readOnly'
+    // Se for readOnly (visualizar), esconde o botão de upload
+    if (readOnly) {
+        $('#input-imagens').hide();
+    } else {
+         $('#input-imagens').show();
+         // O 'change' event listener é religado dentro da função abrirModal
+    }
+    
+    // Mostra as mídias já existentes (para 'editar' e 'visualizar')
+    // A função atualizarPreview agora é responsável por exibir APENAS as novas
+    // E esta parte lida APENAS com as mídias existentes no DB
+    let preview = $('#preview-imagens');
+    preview.html(''); // Limpa preview para evitar duplicidade
+    if (medias && medias.length > 0 && !(medias.length === 1 && medias[0].nome_original === 'placeholder.jpg')) {
+        medias.forEach(m => {
+            let ext = m.caminho.split('.').pop().toLowerCase();
+            const container = $(`<div class="relative"></div>`);
+            if (['mp4','webm','ogg'].includes(ext)) {
+                container.append(`<video class="w-32 h-20 object-cover rounded-md" controls src="${m.caminho}"></video>`);
+            } else {
+                container.append(`<img src="${m.caminho}" class="w-32 h-20 object-cover rounded-md">`);
+            }
+            // Não adiciona botão de remoção para imagens existentes do DB neste momento
+            preview.append(container);
+        });
+    }
+
+    // Liga o input de arquivos (só vai funcionar se não estiver 'readOnly')
+    $('#input-imagens').off('change').on('change', function(){
+        // Adiciona novos arquivos à lista global
+        for (let i=0;i<this.files.length;i++) imagensSelecionadas.push(this.files[i]);
+        // Limpa o input file para que o usuário possa selecionar o mesmo arquivo novamente se quiser
+        this.value = null; 
+        // Re-renderiza o preview, adicionando os novos arquivos
+        atualizarPreview(); 
+    });
+};
+
+
+// abre modal para as ações
+function abrirModal(acao, id=0){
     $('#modal').removeClass('hidden');
+    $('#modal-title').text(acao.charAt(0).toUpperCase()+acao.slice(1) + (id ? ` #${id}` : ''));
+    $('#modal-body').html('<p class="text-center text-gray-400">Carregando...</p>');
+    $('#modal-confirm').show();
+    imagensSelecionadas = []; // Zera a lista de novas imagens
 
-    let options = `<?php
-        foreach($proprietarios as $idp=>$nome){
-            echo "<option value=\"$idp\">$nome</option>";
-        }
-    ?>`;
-
-    if(tipo==='cadastrar'){
-        $('#modal-title').text('Cadastrar Imóvel');
-        $('#modal-body').html(`
-            <input type="text" id="tipo" placeholder="Tipo" class="w-full p-2 mb-2 rounded bg-zinc-700">
-            <select id="status" class="w-full p-2 mb-2 rounded bg-zinc-700">
-                <option value="Disponivel">Disponível</option>
-                <option value="Vendido">Vendido</option>
-                <option value="Alugado">Alugado</option>
-            </select>
-            <input type="number" id="valor" placeholder="Valor" class="w-full p-2 mb-2 rounded bg-zinc-700">
-            <textarea id="descricao" placeholder="Descrição" class="w-full p-2 mb-2 rounded bg-zinc-700"></textarea>
-            <select id="proprietario" class="w-full p-2 mb-2 rounded bg-zinc-700">${options}</select>
-        `);
-        $('#modal-confirm').off('click').click(function(){
-            $.post('', {
-                acao:'cadastrar', 
-                tipo:$('#tipo').val(), 
-                status:$('#status').val(), 
-                valor:$('#valor').val(), 
-                descricao:$('#descricao').val(), 
-                proprietario:$('#proprietario').val()
-            }, function(res){
-                res=JSON.parse(res);
-                alert(res.status==='sucesso'?'Cadastro realizado!':res.mensagem);
-                if(res.status==='sucesso') location.reload();
-            });
+    if (acao === 'cadastrar') {
+        $('#modal-title').text('Cadastrar Novo Imóvel');
+        buildForm({}, false, []); // Chama form vazio, editável, sem mídias
+        
+        // Ação do botão confirmar para CADASTRAR
+        $('#modal-confirm').off('click').on('click', function(){
+            enviarFormulario(acao);
         });
-    } else if(tipo==='editar'){
-        $('#modal-title').text('Editar Imóvel');
-        $('#modal-body').html(`
-            <input type="hidden" id="id" value="${id}">
-            <input type="text" id="tipo" value="${tipoImovel}" class="w-full p-2 mb-2 rounded bg-zinc-700">
-            <select id="status" class="w-full p-2 mb-2 rounded bg-zinc-700">
-                <option value="Disponivel">Disponível</option>
-                <option value="Vendido">Vendido</option>
-                <option value="Alugado">Alugado</option>
-            </select>
-            <input type="number" id="valor" value="${valor}" class="w-full p-2 mb-2 rounded bg-zinc-700">
-            <textarea id="descricao" class="w-full p-2 mb-2 rounded bg-zinc-700">${descricao}</textarea>
-            <select id="proprietario" class="w-full p-2 mb-2 rounded bg-zinc-700">${options}</select>
-        `);
-        // Seleciona status e proprietário corretos
-        $('#status').val(status);
-        $('#proprietario').val(proprietario);
 
-        $('#modal-confirm').off('click').click(function(){
-            $.post('', {
-                acao:'editar', 
-                id:id, 
-                tipo:$('#tipo').val(), 
-                status:$('#status').val(), 
-                valor:$('#valor').val(), 
-                descricao:$('#descricao').val(), 
-                proprietario:$('#proprietario').val()
-            }, function(res){
-                res=JSON.parse(res);
-                alert(res.status==='sucesso'?'Editado com sucesso!':res.mensagem);
-                if(res.status==='sucesso') location.reload();
-            });
+    } else if (acao === 'editar' || acao === 'visualizar') {
+        // buscar dados do imóvel para popular o form
+        $.post('', {acao:'visualizar', id: id}, function(res){
+            let resp;
+            try { 
+                resp = typeof res === 'string' ? JSON.parse(res) : res; 
+            } catch(e){
+                alert('Erro: A resposta do servidor não é um JSON válido! Verifique o console (F12) para a resposta bruta.');
+                console.log("Resposta com erro recebida (não JSON):", res);
+                fecharModal();
+                return;
+            }
+            
+            if (resp.status === 'sucesso') {
+                const readOnly = acao === 'visualizar';
+                buildForm(resp.imovel, readOnly, resp.medias); 
+                
+                if (readOnly) {
+                     $('#modal-confirm').hide(); // Esconde o botão de confirmar para visualizar
+                } else {
+                    // Ação do botão confirmar para EDITAR
+                    $('#modal-confirm').show().off('click').on('click', function(){
+                        enviarFormulario(acao, id);
+                    });
+                }
+            } else {
+                alert(resp.mensagem || 'Erro ao carregar imóvel');
+                fecharModal();
+            }
         });
-    } else if(tipo==='excluir'){
-        $('#modal-title').text('Confirmar Exclusão');
-        $('#modal-body').html('<p>Deseja realmente excluir este imóvel?</p>');
-        $('#modal-confirm').off('click').click(function(){
-            $.post('', {acao:'excluir', id:id}, function(res){
-                res=JSON.parse(res);
-                alert(res.status==='sucesso'?'Excluído com sucesso!':res.mensagem);
-                if(res.status==='sucesso') location.reload();
+
+    } else if (acao === 'excluir') {
+        $('#modal-body').html(`<p>Deseja realmente excluir o imóvel #${id}?</p>`);
+        
+        // Ação do botão confirmar para EXCLUIR
+        $('#modal-confirm').off('click').on('click', function(){
+            $.post('', {acao:'excluir', id: id}, function(resp){
+                let res;
+                try { res = typeof resp === 'string' ? JSON.parse(resp) : resp; } catch(e){}
+                if (res.status === 'sucesso') location.reload();
+                else alert(res.mensagem || 'Erro ao excluir');
             });
         });
     }
 }
 
+// Função centralizada para enviar formulário (Cadastrar/Editar)
+function enviarFormulario(acao, id = 0) {
+    const fd = new FormData($('#form-imovel')[0]);
+    
+    // Adiciona as imagens SELECIONADAS (apenas as novas) ao FormData
+    // Usando 'imagens[]' para garantir que PHP receba como array
+    imagensSelecionadas.forEach(f => fd.append('imagens[]', f));
+    
+    fd.append('acao', acao);
+    if (acao === 'editar') {
+        fd.append('id', id); // Garante que o ID está no form data para edição
+    }
+
+    $.ajax({
+        url: '',
+        method: 'POST',
+        data: fd,
+        contentType: false,
+        processData: false,
+        success: function(resp){
+            let res;
+            try { 
+                res = typeof resp === 'string' ? JSON.parse(resp) : resp; 
+            } catch(e){
+                alert('Erro inesperado: A resposta do servidor não é um JSON válido. Verifique se há Warnings/Notices no PHP.');
+                console.log("Resposta bruta do servidor:", resp);
+                return;
+            }
+            if (res.status === 'sucesso') location.reload();
+            else alert(res.mensagem || 'Erro ao salvar');
+        },
+        error: function(xhr, status, error){ 
+            alert('Erro na requisição AJAX: ' + error + '. Verifique a conexão e o console (F12).'); 
+        }
+    });
+}
+
+
+// ** CORREÇÃO CRÍTICA **: Atualiza preview das imagens selecionadas (APENAS NOVAS)
+// Esta função agora RE-CRIA o preview COMPLETO das imagens selecionadas a cada mudança/remoção.
+function atualizarPreview(){
+    const preview = $('#preview-imagens');
+    // Encontra o último container de mídias do DB e adiciona os previews novos DEPOIS.
+    // Se não houver mídias do DB, adiciona no início.
+    const containerExistente = preview.children().last();
+    
+    // Remove APENAS os previews das imagens recém-selecionadas (os que têm o botão de remover)
+    preview.find('.preview-novo').remove();
+
+    imagensSelecionadas.forEach((file, idx) => {
+        const reader = new FileReader();
+        reader.onload = function(e){
+            const ext = file.name.split('.').pop().toLowerCase();
+            // Adiciona classe para identificar que é um item NOVO
+            const container = $(`<div class="relative preview-novo"></div>`);
+            
+            if (['mp4','webm','ogg'].includes(ext)) {
+                container.append(`<video class="w-32 h-20 object-cover rounded-md" src="${e.target.result}" controls></video>`);
+            } else {
+                container.append(`<img src="${e.target.result}" class="w-32 h-20 object-cover rounded-md">`);
+            }
+            
+            // Botão de remoção
+            const btn = $(`<button type="button" class="absolute top-0 right-0 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">×</button>`);
+            
+            btn.on('click', function(){ 
+                // Remove o arquivo do array pelo índice (IMPORTANTE!)
+                imagensSelecionadas.splice(idx, 1); 
+                // Chama a função de novo para RE-RENDERIZAR (isso corrige o problema de índice)
+                atualizarPreview();
+            });
+            
+            container.append(btn);
+            preview.append(container);
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
 function fecharModal(){
     $('#modal').addClass('hidden');
+    $('#modal-body').empty();
+    $('#modal-confirm').off('click').show();
+}
+
+// util helpers JS
+function escapeHtml(str){
+    if(!str && str !== 0) return '';
+    return String(str).replace(/[&<>"'`=\/]/g, function(s){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','`':'&#x60;','=':'&#x3D;','/':'&#x2F;'}[s]; });
 }
 </script>
-
 </body>
 </html>
