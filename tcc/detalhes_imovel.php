@@ -45,12 +45,6 @@ if ($stmtMedia === false) {
     $stmtMedia->close();
 }
 
-// 3. IMAGEM PADRÃO SE NÃO HOUVER MÍDIA ENCONTRADA (FALLBACK)
-if (empty($medias)) {
-    $medias = [
-        ["caminho" => "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80"]
-    ];
-}
 
 // Página anterior
 $pagina_anterior = $_SERVER['HTTP_REFERER'] ?? 'buscar_imoveis.php';

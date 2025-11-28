@@ -7,36 +7,6 @@ if (!isset($_SESSION['idUSUARIO']) || !isset($_SESSION['tipo'])) {
 
 include '../conexao.php'; // ajuste o caminho se necessário
 
-// Adicione esta função logo após o include 'conexao.php'
-function log_historico($conn, $tabela, $id_registro, $acao, $dados_anteriores, $dados_atuais) {
-    // ID do usuário logado na sessão
-    $usuario_id = $_SESSION['idUSUARIO'] ?? null;
-    
-    // JSON Encoder para os dados. USE O FLAG JSON_UNESCAPED_UNICODE para evitar problemas com acentuação
-    $json_anterior = json_encode($dados_anteriores, JSON_UNESCAPED_UNICODE);
-    $json_atual = json_encode($dados_atuais, JSON_UNESCAPED_UNICODE);
-    
-    // Preparar a inserção no banco
-    $sql = "INSERT INTO HISTORICO (usuario_idUSUARIO, tabela, registro_id, acao, dados_anteriores, dados_atuais)
-            VALUES (?, ?, ?, ?, ?, ?)";
-    
-    $stmt = $conn->prepare($sql);
-    
-    // Tipos de parâmetros: i (int), s (string), i (int), s (string), s (string), s (string)
-    $stmt->bind_param("isisss", 
-        $usuario_id, 
-        $tabela, 
-        $id_registro, 
-        $acao, 
-        $json_anterior, 
-        $json_atual
-    );
-    
-    // Tenta executar, mas não mata a aplicação se falhar
-    @$stmt->execute();
-    @$stmt->close();
-}
-
 // --- Endpoint AJAX interno para busca unificada (clientes, proprietarios, corretores, imoveis) ---
 if (isset($_GET['ajax_search']) && $_GET['ajax_search'] == '1') {
     header('Content-Type: application/json; charset=utf-8');
@@ -134,10 +104,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
             // 🔑 CAPTURA DO ID PARA O UPLOAD (Correto para CADASTRO)
             $id_imovel_processado = $stmt->insert_id; 
             
-            // Log do Histórico
-            if ($sucesso) {
-                 log_historico($conn, 'IMOVEL', $id_imovel_processado, 'INSERCAO', null, $_POST);
-            }
             $stmt->close();
             
         } else {
@@ -156,10 +122,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
             // 🔑 CAPTURA DO ID PARA O UPLOAD (Correto para EDIÇÃO)
             $id_imovel_processado = $id; 
             
-            // Log do Histórico
-            if ($sucesso) {
-                 log_historico($conn, 'IMOVEL', $id_imovel_processado, 'ATUALIZACAO', null, $_POST);
-            }
             $stmt->close();
         }
 
@@ -210,7 +172,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
                 
                 if (move_uploaded_file($tmp, $dest)) {
                     // O caminho salvo no banco (coluna `caminho`) DEVE ser o caminho WEB/relativo
-                    $caminhoBd = $webPathBase . $novoNome; 
+                    // Garantimos a barra entre a base e o nome do arquivo
+                    $caminhoBd = $webPathBase . '/' . $novoNome; 
                     
                     $stmtImg = $conn->prepare("INSERT INTO IMAGEM_IMOVEL (IMOVEL_idIMOVEL, caminho, nome_original) VALUES (?,?,?)");
                     if ($stmtImg) {
@@ -231,9 +194,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
     if ($acao === 'excluir') {
         $id = intval($_POST['id'] ?? 0);
         if (!$id) resposta(['status'=>'erro','mensagem'=>'ID inválido']);
-        
-        // Adiciona log de histórico antes da exclusão
-        log_historico($conn, 'IMOVEL', $id, 'EXCLUSAO', ['idIMOVEL' => $id], null); 
         
         $stmt = $conn->prepare("DELETE FROM IMOVEL WHERE idIMOVEL=?");
         $stmt->bind_param("i", $id);
@@ -300,7 +260,7 @@ while ($r = $propResult->fetch_assoc()) $proprietarios[$r['idPROPRIETARIO']] = $
 body::before{content:"";position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(135deg,#111,#1a1a1a,#222233,#1a1a1a);background-size:400% 400%;animation:gradientMove 20s ease infinite;z-index:-2;}
 @keyframes gradientMove{0%{background-position:0% 50%;}50%{background-position:100% 50%;}100%{background-position:0% 50%;}}
 .particle{position:absolute;border-radius:50%;background:rgba(255,255,255,0.03);pointer-events:none;z-index:-1;animation:floatParticle linear infinite;}
-@keyframes floatParticle{0%{transform:translateY(0) translateX(0) scale(0.5);opacity:0;}10%{opacity:0.2;}100%{transform:translateY(-800px) translateX(200px) scale(1);opacity:0;}}
+@keyframes floatParticle{0%{transform:translateY(0) translateX(0) scale(0.5);opacity:0;}10%{opacity:0.2;}100%{transform:translateY(-800px) translateX(200px) scale(1);opacity:0;} }
 .btn-glow{position:relative;transition:all 0.3s ease;background:#1f1f2f;color:#e0e0e0;}
 .btn-glow::before{content:'';position:absolute;top:-2px;left:-2px;right:-2px;bottom:-2px;background:linear-gradient(45deg,#2a2a3f,#3a3a5a,#2a2a3f,#3a3a5a);border-radius:inherit;filter:blur(6px);opacity:0;transition:opacity 0.3s ease;z-index:-1;}
 .btn-glow:hover{background:#2c2c44;}

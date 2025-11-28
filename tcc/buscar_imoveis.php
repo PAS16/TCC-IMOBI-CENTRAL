@@ -115,9 +115,6 @@ function caminho_valido_para_exibir($caminho_relativo) {
     return false;
 }
 
-// URL de fallback externo
-$fallback_url = 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80';
-$default_common_img = 'uploads/imoveis/1.jpg'; // imagem "comum" que você disse existir
 
 ?>
 <!DOCTYPE html>
@@ -202,8 +199,6 @@ $default_common_img = 'uploads/imoveis/1.jpg'; // imagem "comum" que você disse
             // 2) imagem com o id do imóvel (ex: uploads/imoveis/5.jpg)
             $attempts[] = 'uploads/imoveis/' . $row['idIMOVEL'] . '.jpg';
 
-            // 3) imagem "comum" 1.jpg na pasta (você mencionou que existe)
-            $attempts[] = $default_common_img;
 
             // 4) fallback externo
             $attempts[] = $fallback_url;
@@ -218,10 +213,8 @@ $default_common_img = 'uploads/imoveis/1.jpg'; // imagem "comum" que você disse
                 }
             }
 
-            // Caso o caminho final seja relativo (local), garantimos que o src use a url relativa correta
-            // Se for uma URL completa (http...), já está ok.
             if (!preg_match('#^https?://#i', $caminho_final)) {
-                // garante que comece sem barra duplicada
+        
                 $caminho_final = '/' . ltrim($caminho_final, '/');
             }
             ?>
