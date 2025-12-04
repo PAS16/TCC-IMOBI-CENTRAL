@@ -127,67 +127,160 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
 
         if (!$sucesso) {
             // Se a inserção/atualização falhar, encerra aqui
-            resposta(['status'=>'erro','mensagem'=>'Erro de banco de dados: ' . $conn->error]);
+            resposta(['status'=>'erro','mensagem'=>'Erro de banco de dados na atualização do imóvel: ' . $conn->error]);
         }
         
         // -------------------------------------------------------------------------------------------------
-        // 3. BLOCO DE UPLOAD DE MÍDIAS (AJUSTADO O CAMINHO)
+        // 3. BLOCO DE UPLOAD DE MÍDIAS (CORRIGIDO CAMINHOS, CHECAGEM E CRIAÇÃO DE PASTA)
         // -------------------------------------------------------------------------------------------------
 
         // Upload de mídias (imagens/vídeos)
+        $warning_message = '';
+        $files_uploaded_count = 0; // Contador de uploads bem-sucedidos
+        
         if ($id_imovel_processado > 0 && !empty($_FILES['imagens']) && !empty($_FILES['imagens']['name'][0])) {
             
             $allowed_img = ['jpg','jpeg','png','gif','webp'];
             $allowed_vid = ['mp4','webm','ogg'];
             
-            // CORREÇÃO CRÍTICA: Ajuste do caminho absoluto para upload.
-            // Isso assume que o diretório `uploads` está um nível acima do diretório do script atual.
-            $uploadDir = realpath(__DIR__ . '/../uploads/imoveis/');
+            // 1. Definição do Caminho Físico (Um nível acima do script, na pasta 'uploads/imoveis')
+            $scriptDir = __DIR__; // Diretório onde 'listar.php' está (ex: /var/www/html/tcc)
+            $uploadPathBase = $scriptDir . '/../uploads/imoveis/'; // Caminho absoluto (ex: /var/www/html/uploads/imoveis/)
             
-            if ($uploadDir === false) {
-                 resposta(['status'=>'erro','mensagem'=>'Erro: O diretório de upload não foi encontrado. Verifique o caminho.']);
+            // ** CHECA CRÍTICA DE DIRETÓRIO E CRIAÇÃO AUTOMÁTICA **
+            // Tenta criar o diretório se não existir
+            if (!is_dir($uploadPathBase)) {
+                // Tenta criar o diretório recursivamente (true) com permissão 0777
+                if (!mkdir($uploadPathBase, 0777, true)) {
+                    // MENSAGEM DE ERRO CRÍTICA: FALHA AO CRIAR
+                    $errorMessage = "⚠️ ERRO CRÍTICO DE PASTA: O diretório de upload ($uploadPathBase) não existe e **NÃO PÔDE SER CRIADO** pelo PHP. Por favor, verifique se a pasta 'uploads/' (o nível acima de 'tcc/') existe e tem permissões de escrita (CHMOD 777).";
+                    resposta(['status'=>'erro','mensagem'=>$errorMessage]);
+                }
             }
+            
+            // Após garantir que existe (ou foi criado), obtém o caminho real e checa permissão
+            $uploadDir = realpath($uploadPathBase);
+
+            if ($uploadDir === false || !is_writable($uploadDir)) {
+                 // MENSAGEM DE ERRO CRÍTICA: PASTA EXISTE, MAS NÃO É GRAVÁVEL
+                 $errorMessage = "🚫 ERRO DE PERMISSÃO: O diretório de upload (`$uploadPathBase`) existe (ou foi criado), mas **NÃO É GRAVÁVEL** pelo servidor web. Por favor, defina as permissões da pasta `$uploadPathBase` para **CHMOD 777** (Escrita total).";
+                 resposta(['status'=>'erro','mensagem'=>$errorMessage]);
+            }
+            
             $uploadDir .= DIRECTORY_SEPARATOR; // Garante a barra no final
             
-            // ATENÇÃO: Verifique o caminho relativo (web) que o navegador usa.
-            $webPathBase = '../uploads/imoveis'; 
+            // 2. Definição do Caminho Web (CORRIGIDO: O que o navegador usa)
+            $webPathBase = '/TCC-IMOBI-CENTRAL/uploads/imoveis'; 
 
-            if (!is_dir($uploadDir)) {
-                 // Tenta criar o diretório se não existir
-                 if (!mkdir($uploadDir, 0777, true)) {
-                      resposta(['status'=>'erro','mensagem'=>'Erro: Não foi possível criar o diretório de upload.']);
-                 }
-            }
             
+            // --- Lógica de Limites ---
+            $max_total = 7;
+            $max_videos = 2;
+            
+            // 1. Contar mídias existentes
+            $existing_count = 0;
+            $existing_videos = 0;
+            
+            $stmt_count = $conn->prepare("SELECT caminho FROM IMAGEM_IMOVEL WHERE IMOVEL_idIMOVEL=?");
+            $stmt_count->bind_param("i", $id_imovel_processado);
+            $stmt_count->execute();
+            $result_count = $stmt_count->get_result();
+            // Ignora o placeholder ao contar
+            while($row = $result_count->fetch_assoc()) {
+                if (strpos($row['caminho'], 'placeholder.jpg') !== false) continue;
+                $existing_count++;
+                $ext = strtolower(pathinfo($row['caminho'], PATHINFO_EXTENSION));
+                if (in_array($ext, $allowed_vid)) {
+                    $existing_videos++;
+                }
+            }
+            $stmt_count->close();
+
+            $valid_files_meta = [];
+            $new_videos_count = 0;
+            
+            // 2. Pré-validação e contagem de novos arquivos válidos
             foreach ($_FILES['imagens']['tmp_name'] as $k => $tmp) {
-                if (!is_uploaded_file($tmp)) continue;
+                // Checa se o arquivo foi enviado corretamente e sem erro de upload
+                if (!is_uploaded_file($tmp) || $_FILES['imagens']['error'][$k] !== UPLOAD_ERR_OK) {
+                    if ($_FILES['imagens']['error'][$k] !== UPLOAD_ERR_NO_FILE) {
+                         $warning_message .= " Erro: Falha de upload interno (Código: " . $_FILES['imagens']['error'][$k] . ") para o arquivo " . ($_FILES['imagens']['name'][$k] ?? 'indefinido') . ". (Verifique `php.ini` para limites de tamanho.)";
+                    }
+                    continue;
+                }
+                
                 $origName = $_FILES['imagens']['name'][$k];
                 $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+                $is_video = in_array($ext, $allowed_vid);
                 
                 // Ignora tipos não permitidos
-                if (!in_array($ext, array_merge($allowed_img,$allowed_vid))) continue; 
+                if (!in_array($ext, array_merge($allowed_img,$allowed_vid))) {
+                    $warning_message .= " Erro: O arquivo '$origName' tem um tipo não permitido e foi ignorado.";
+                    continue; 
+                } 
 
-                $novoNome = uniqid('m_') . '.' . $ext;
+                // Checa limite total (7 mídias)
+                if (($existing_count + count($valid_files_meta)) >= $max_total) {
+                     $warning_message .= " Aviso: O limite de $max_total mídias por imóvel foi atingido. As mídias restantes foram ignoradas.";
+                     break; // Para de processar novos arquivos
+                }
+                
+                // Checa limite de vídeos (2 vídeos)
+                if ($is_video) {
+                    if (($existing_videos + $new_videos_count) >= $max_videos) {
+                        $warning_message .= " Aviso: O limite de $max_videos vídeos por imóvel foi atingido. O vídeo '$origName' foi ignorado.";
+                        continue; // Ignora apenas este vídeo
+                    }
+                    $new_videos_count++;
+                }
+                
+                $valid_files_meta[] = ['tmp' => $tmp, 'origName' => $origName, 'ext' => $ext, 'is_video' => $is_video];
+            }
+            
+            // 3. Processamento de Upload e Registro
+            foreach ($valid_files_meta as $meta) {
+                $novoNome = uniqid('m_') . '.' . $meta['ext'];
                 $dest = $uploadDir . $novoNome;
                 
-                if (move_uploaded_file($tmp, $dest)) {
+                if (move_uploaded_file($meta['tmp'], $dest)) {
                     // O caminho salvo no banco (coluna `caminho`) DEVE ser o caminho WEB/relativo
-                    // Garantimos a barra entre a base e o nome do arquivo
                     $caminhoBd = $webPathBase . '/' . $novoNome; 
                     
                     $stmtImg = $conn->prepare("INSERT INTO IMAGEM_IMOVEL (IMOVEL_idIMOVEL, caminho, nome_original) VALUES (?,?,?)");
+                    
                     if ($stmtImg) {
-                        // VINCULAÇÃO CORRETA: Usa o ID que acabamos de obter ou validar.
-                        $stmtImg->bind_param("iss", $id_imovel_processado, $caminhoBd, $origName); 
-                        $stmtImg->execute();
+                        $stmtImg->bind_param("iss", $id_imovel_processado, $caminhoBd, $meta['origName']); 
+                        
+                        if ($stmtImg->execute()) {
+                             $files_uploaded_count++;
+                        } else {
+                            // Erro de INSERT no banco
+                            $warning_message .= " Erro DB: Falha ao registrar '$meta[origName]' no banco de dados. Motivo: " . $stmtImg->error . ".";
+                        }
                         $stmtImg->close();
+                    } else {
+                        // Erro ao preparar statement (geralmente sintaxe SQL)
+                        $warning_message .= " Erro DB: Falha ao preparar INSERT para '$meta[origName]'. Motivo: " . $conn->error . ".";
                     }
+                } else {
+                    // Erro de I/O (movimentação) - O mais provável é permissão
+                    $warning_message .= " Erro I/O: Falha ao mover arquivo '$meta[origName]'. Causa provável: **Permissão de escrita** na pasta de destino ($uploadDir).";
                 }
             }
         }
         
         // 4. Resposta de Sucesso
         $msg = ($acao === 'cadastrar') ? 'Imóvel cadastrado com sucesso!' : 'Imóvel atualizado com sucesso!';
+        
+        if (isset($files_uploaded_count) && $files_uploaded_count > 0) {
+            $msg .= " ($files_uploaded_count arquivo(s) salvo(s) com sucesso.)";
+        }
+        
+        if (!empty($warning_message)) {
+             // Destaca o aviso de falha.
+             $msg .= " \n\n⚠️ **ATENÇÃO / ERROS ENCONTRADOS:** " . $warning_message;
+        }
+        
         resposta(['status'=>'sucesso','mensagem'=>$msg, 'id'=>$id_imovel_processado]);
     } // Fim do if (cadastrar || editar)
 
@@ -195,14 +288,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
         $id = intval($_POST['id'] ?? 0);
         if (!$id) resposta(['status'=>'erro','mensagem'=>'ID inválido']);
         
+        // Antes de excluir o imóvel, vamos tentar excluir as mídias associadas
+        $stmt_select = $conn->prepare("SELECT caminho FROM IMAGEM_IMOVEL WHERE IMOVEL_idIMOVEL=?");
+        $stmt_select->bind_param("i", $id);
+        $stmt_select->execute();
+        $result_medias = $stmt_select->get_result();
+        
+        // Excluir as imagens fisicamente (opcional, mas recomendado)
+        while($row = $result_medias->fetch_assoc()) {
+             // Ignora o placeholder e URLs externas
+            if (strpos($row['caminho'], 'https://') !== 0 && strpos($row['caminho'], 'placeholder.jpg') === false) {
+                // Remove o prefixo web para obter o caminho relativo ao script
+                $relativePath = str_replace('/TCC-IMOBI-CENTRAL/', '../', $row['caminho']);
+                $fullPath = __DIR__ . '/' . $relativePath;
+                if (file_exists($fullPath)) {
+                    @unlink($fullPath); // @ para suprimir erros
+                }
+            }
+        }
+        $stmt_select->close();
+
         $stmt = $conn->prepare("DELETE FROM IMOVEL WHERE idIMOVEL=?");
         $stmt->bind_param("i", $id);
         $ok = $stmt->execute();
+        // A exclusão de IMAGEM_IMOVEL é em cascata, por isso não precisamos de código adicional para o DB.
         resposta($ok?['status'=>'sucesso','mensagem'=>'Imóvel excluído com sucesso.']:['status'=>'erro','mensagem'=>$stmt->error]);
     }
 
     if ($acao === 'visualizar') {
-        // Agora este bloco executa sem que as variáveis de 'cadastrar' sejam lidas, evitando o Warning.
         $id = intval($_POST['id'] ?? 0);
         if (!$id) resposta(['status'=>'erro','mensagem'=>'ID inválido']);
         
@@ -221,7 +334,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
              resposta(['status'=>'erro','mensagem'=>'Imóvel não encontrado.']);
         }
 
-        if (empty($medias)) {
+        // AQUI: Checa se há APENAS o placeholder ou se não há nada no DB.
+        $has_real_media = false;
+        foreach($medias as $m) {
+            if (strpos($m['caminho'], 'placeholder.jpg') === false) {
+                $has_real_media = true;
+                break;
+            }
+        }
+
+        if (!$has_real_media) {
+             // Se não encontrou nenhuma mídia real, garante que o placeholder está lá (apenas para visualização se não tiver nada)
             $medias = [['caminho'=>'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80','nome_original'=>'placeholder.jpg']];
         }
 
@@ -425,7 +548,7 @@ const buildForm = (data = {}, readOnly = false, medias = []) => {
     // Cidade
     form += `<div><label class="block mb-1">Cidade</label><input type="text" name="cidade" value="${escapeHtml(cidade)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
     // Estado
-    form += `<div><label class="block mb-1">Estado</label><input type="text" name="estado" value="${escapeHtml(estado)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
+    form += `<div><label class="block mb-1">Estado</label><input type="text" name="estado" maxlength="50" value="${escapeHtml(estado)}" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}></div>`;
     
     // Negociável
     form += `<div><label class="block mb-1">Negociável</label>
@@ -455,10 +578,11 @@ const buildForm = (data = {}, readOnly = false, medias = []) => {
                 <textarea name="descricao" rows="3" class="w-full p-2 rounded-xl bg-[#2a2a3f]" ${isDisabled}>${escapeHtml(descricao)}</textarea>
             </div>`;
     
-    // Mídias (Upload e Preview)
+    // Mídias (Upload e Preview) - ADICIONADO CONTADOR
     form += `<div>
-                <label class="block mb-1">Mídias</label>
+                <label class="block mb-1">Mídias (${readOnly ? medias.length : `Máx. 7 total, 2 vídeos`})</label>
                 <input type="file" id="input-imagens" name="imagens[]" multiple accept="image/*,video/*" class="w-full p-2 rounded-xl bg-[#2a2a3f]">
+                <div id="media-count" class="text-sm text-gray-400 mt-1"></div>
                 <div id="preview-imagens" class="flex flex-wrap gap-2 mt-2"></div>
             </div>`;
             
@@ -466,42 +590,57 @@ const buildForm = (data = {}, readOnly = false, medias = []) => {
     $('#modal-body').html(form);
 
     // Lógica de preview de mídias e 'readOnly'
-    // Se for readOnly (visualizar), esconde o botão de upload
     if (readOnly) {
         $('#input-imagens').hide();
     } else {
          $('#input-imagens').show();
-         // O 'change' event listener é religado dentro da função abrirModal
     }
     
     // Mostra as mídias já existentes (para 'editar' e 'visualizar')
-    // A função atualizarPreview agora é responsável por exibir APENAS as novas
-    // E esta parte lida APENAS com as mídias existentes no DB
     let preview = $('#preview-imagens');
     preview.html(''); // Limpa preview para evitar duplicidade
-    if (medias && medias.length > 0 && !(medias.length === 1 && medias[0].nome_original === 'placeholder.jpg')) {
-        medias.forEach(m => {
+    
+    // Filtra o placeholder se houver mídias reais (melhoria)
+    let realMedias = medias.filter(m => strpos(m.caminho, 'placeholder.jpg') === -1);
+
+    if (realMedias.length > 0) {
+        realMedias.forEach(m => {
             let ext = m.caminho.split('.').pop().toLowerCase();
-            const container = $(`<div class="relative"></div>`);
+            // Adiciona classe para identificar que é um item EXISTENTE
+            const container = $(`<div class="relative preview-existente"></div>`);
             if (['mp4','webm','ogg'].includes(ext)) {
+                // CORREÇÃO DE URL: Garantir que a URL da mídia do DB seja usada corretamente
                 container.append(`<video class="w-32 h-20 object-cover rounded-md" controls src="${m.caminho}"></video>`);
             } else {
                 container.append(`<img src="${m.caminho}" class="w-32 h-20 object-cover rounded-md">`);
             }
-            // Não adiciona botão de remoção para imagens existentes do DB neste momento
             preview.append(container);
         });
+    } else if (medias.length === 1 && strpos(medias[0].caminho, 'placeholder.jpg') !== -1) {
+        // Se só tem o placeholder, mostra ele
+        const container = $(`<div class="relative preview-existente"></div>`);
+        container.append(`<img src="${medias[0].caminho}" class="w-32 h-20 object-cover rounded-md opacity-50" title="Placeholder: Nenhuma imagem cadastrada">`);
+        preview.append(container);
     }
 
-    // Liga o input de arquivos (só vai funcionar se não estiver 'readOnly')
+    // Liga o input de arquivos
     $('#input-imagens').off('change').on('change', function(){
-        // Adiciona novos arquivos à lista global
-        for (let i=0;i<this.files.length;i++) imagensSelecionadas.push(this.files[i]);
-        // Limpa o input file para que o usuário possa selecionar o mesmo arquivo novamente se quiser
+        // Previne limite: Se já passou, não adiciona mais arquivos
+        const existingCount = preview.children('.preview-existente').length;
+        const currentNewCount = imagensSelecionadas.length;
+        const max_total = 7;
+        
+        for (let i=0;i<this.files.length;i++) {
+            if ((existingCount + currentNewCount + (i + 1)) <= max_total) {
+                imagensSelecionadas.push(this.files[i]);
+            }
+        }
         this.value = null; 
-        // Re-renderiza o preview, adicionando os novos arquivos
-        atualizarPreview(); 
+        atualizarPreview(existingCount); 
     });
+    
+    // Chama o preview inicial para configurar o contador
+    atualizarPreview(realMedias.length);
 };
 
 
@@ -537,7 +676,8 @@ function abrirModal(acao, id=0){
             
             if (resp.status === 'sucesso') {
                 const readOnly = acao === 'visualizar';
-                buildForm(resp.imovel, readOnly, resp.medias); 
+                const medias = resp.medias || [];
+                buildForm(resp.imovel, readOnly, medias); 
                 
                 if (readOnly) {
                      $('#modal-confirm').hide(); // Esconde o botão de confirmar para visualizar
@@ -573,12 +713,11 @@ function enviarFormulario(acao, id = 0) {
     const fd = new FormData($('#form-imovel')[0]);
     
     // Adiciona as imagens SELECIONADAS (apenas as novas) ao FormData
-    // Usando 'imagens[]' para garantir que PHP receba como array
     imagensSelecionadas.forEach(f => fd.append('imagens[]', f));
     
     fd.append('acao', acao);
     if (acao === 'editar') {
-        fd.append('id', id); // Garante que o ID está no form data para edição
+        fd.append('id', id); 
     }
 
     $.ajax({
@@ -596,8 +735,19 @@ function enviarFormulario(acao, id = 0) {
                 console.log("Resposta bruta do servidor:", resp);
                 return;
             }
-            if (res.status === 'sucesso') location.reload();
-            else alert(res.mensagem || 'Erro ao salvar');
+            
+            // Se houver status de erro, mostra a mensagem detalhada
+            if (res.status === 'erro') {
+                 alert(res.mensagem); 
+            } else if (res.status === 'sucesso') { 
+                 // Se houver aviso de falha de I/O, mostra no alert, senão só recarrega.
+                 if (res.mensagem.includes('ATENÇÃO / ERROS')) {
+                      alert(res.mensagem);
+                 }
+                 location.reload();
+            } else {
+                 alert('Erro desconhecido ao salvar.');
+            }
         },
         error: function(xhr, status, error){ 
             alert('Erro na requisição AJAX: ' + error + '. Verifique a conexão e o console (F12).'); 
@@ -606,25 +756,27 @@ function enviarFormulario(acao, id = 0) {
 }
 
 
-// ** CORREÇÃO CRÍTICA **: Atualiza preview das imagens selecionadas (APENAS NOVAS)
-// Esta função agora RE-CRIA o preview COMPLETO das imagens selecionadas a cada mudança/remoção.
-function atualizarPreview(){
+// Atualiza preview e o contador de mídias (NOVAS e EXISTENTES)
+function atualizarPreview(existingCount = 0){
     const preview = $('#preview-imagens');
-    // Encontra o último container de mídias do DB e adiciona os previews novos DEPOIS.
-    // Se não houver mídias do DB, adiciona no início.
-    const containerExistente = preview.children().last();
+    
+    // Se não foi passado o valor, tenta contar os elementos existentes no DOM
+    if (existingCount === 0) {
+        existingCount = preview.children('.preview-existente').length;
+    }
     
     // Remove APENAS os previews das imagens recém-selecionadas (os que têm o botão de remover)
     preview.find('.preview-novo').remove();
 
     imagensSelecionadas.forEach((file, idx) => {
+        // Checa tipo do arquivo
+        const isVideo = file.type.startsWith('video/');
+        
         const reader = new FileReader();
         reader.onload = function(e){
-            const ext = file.name.split('.').pop().toLowerCase();
-            // Adiciona classe para identificar que é um item NOVO
             const container = $(`<div class="relative preview-novo"></div>`);
             
-            if (['mp4','webm','ogg'].includes(ext)) {
+            if (isVideo) {
                 container.append(`<video class="w-32 h-20 object-cover rounded-md" src="${e.target.result}" controls></video>`);
             } else {
                 container.append(`<img src="${e.target.result}" class="w-32 h-20 object-cover rounded-md">`);
@@ -635,9 +787,9 @@ function atualizarPreview(){
             
             btn.on('click', function(){ 
                 // Remove o arquivo do array pelo índice (IMPORTANTE!)
-                imagensSelecionadas.splice(idx, 1); 
+                imagensSelecionadas.splice(idx, 1);
                 // Chama a função de novo para RE-RENDERIZAR (isso corrige o problema de índice)
-                atualizarPreview();
+                atualizarPreview(existingCount);
             });
             
             container.append(btn);
@@ -645,6 +797,20 @@ function atualizarPreview(){
         };
         reader.readAsDataURL(file);
     });
+    
+    // --- ATUALIZAÇÃO DO CONTADOR ---
+    const newCount = imagensSelecionadas.length;
+    const total = existingCount + newCount;
+    $('#media-count').text(`Imagens existentes: ${existingCount} | Novas selecionadas: ${newCount} | Total: ${total} (Máx: 7)`);
+
+    // Desabilita input se atingir o limite
+    if (total >= 7) {
+        // Limpa o input file para que não tente enviar arquivos extras
+        $('#input-imagens').prop('disabled', true).val(''); 
+        $('#media-count').append(' <span class="text-red-400">Limite total de mídias (7) atingido!</span>');
+    } else {
+         $('#input-imagens').prop('disabled', false);
+    }
 }
 
 function fecharModal(){
@@ -657,6 +823,11 @@ function fecharModal(){
 function escapeHtml(str){
     if(!str && str !== 0) return '';
     return String(str).replace(/[&<>"'`=\/]/g, function(s){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','`':'&#x60;','=':'&#x3D;','/':'&#x2F;'}[s]; });
+}
+// strpos para JS (simulação)
+function strpos(haystack, needle, offset) {
+    var i = (haystack + '').indexOf(needle, (offset || 0));
+    return i === -1 ? false : i;
 }
 </script>
 </body>
