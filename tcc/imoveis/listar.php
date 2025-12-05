@@ -145,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
             
             // 1. Definição do Caminho Físico (Um nível acima do script, na pasta 'uploads/imoveis')
             $scriptDir = __DIR__; // Diretório onde 'listar.php' está (ex: /var/www/html/tcc)
-            $uploadPathBase = $scriptDir . '/../uploads/imoveis/'; // Caminho absoluto (ex: /var/www/html/uploads/imoveis/)
+            $uploadPathBase = $scriptDir . '../uploads/imoveis/'; // Caminho absoluto (ex: /var/www/html/uploads/imoveis/)
             
             // ** CHECA CRÍTICA DE DIRETÓRIO E CRIAÇÃO AUTOMÁTICA **
             // Tenta criar o diretório se não existir
@@ -170,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
             $uploadDir .= DIRECTORY_SEPARATOR; // Garante a barra no final
             
             // 2. Definição do Caminho Web (CORRIGIDO: O que o navegador usa)
-            $webPathBase = '/TCC-IMOBI-CENTRAL/uploads/imoveis'; 
+            $webPathBase = '../uploads/imoveis'; 
 
             
             // --- Lógica de Limites ---

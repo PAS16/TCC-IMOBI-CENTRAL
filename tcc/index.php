@@ -135,13 +135,13 @@ function toggleMenu() {
 
     foreach($imoveis as $imovel){
         // Imagem padrão apenas
-        $img = 'uploads/imoveis/1.jpg';
+        $img = 'https://images.pexels.com/photos/259588/pexels-photo-259588.jpeg';
 
         echo '<div class="relative bg-gray-800 rounded-2xl overflow-hidden shadow-lg hover:scale-105 transition cursor-pointer" onclick="location.href=\'detalhes_imovel.php?id='.$imovel['idIMOVEL'].'\'">
           <img src="'.htmlspecialchars($img).'" alt="'.htmlspecialchars($imovel['tipo']).'" class="w-full h-56 object-cover"/>
           <span class="absolute top-2 left-2 bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full">Imagem Padrão</span>
           <div class="p-5">
-            <h3 class="text-xl font-bold mb-2">'.$imovel['tipo'].' - R$ '.number_format($imovel['valor'],2,",",".").'</h3>
+            <h3 class="text-xl font-bold mb-2">'.$imovel['titulo'].' - R$ '.number_format($imovel['valor'],2,",",".").'</h3>
             <p class="text-gray-300">'.$imovel['qtd_quartos'].' quartos · '.$imovel['qtd_banheiro'].' banheiros · '.$imovel['qtd_vagas'].' vagas</p>
           </div>
         </div>';

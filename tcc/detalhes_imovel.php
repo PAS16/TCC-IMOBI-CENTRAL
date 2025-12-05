@@ -1,324 +1,304 @@
 <?php
-// === INÍCIO DO PROCESSAMENTO PHP ===
-
-include 'conexao.php'; // Certifique-se de que o caminho 'conexao.php' está correto
+session_start();
+include 'conexao.php'; // ajuste se necessário
 
 if (!isset($conn) || $conn->connect_error) {
-    die("Erro de conexão com o banco de dados: " . ($conn->connect_error ?? "Variável \$conn não definida"));
+    echo "Erro de conexão com o banco de dados.";
+    exit;
 }
 
-// O ID já está sendo capturado duas vezes no código original. Vou unificar a captura do ID.
+// ID do imóvel
 $id = isset($_GET['id']) ? intval($_GET['id']) : 0;
-if ($id <= 0) die("ID do imóvel inválido.");
+if ($id <= 0) {
+    echo "ID do imóvel inválido.";
+    exit;
+}
 
-// Busca dados do imóvel
+// Busca o imóvel
 $sql = "SELECT * FROM IMOVEL WHERE idIMOVEL = ?";
 $stmt = $conn->prepare($sql);
+if ($stmt === false) {
+    error_log("Erro prepare IMOVEL: " . $conn->error);
+    echo "Erro interno.";
+    exit;
+}
 $stmt->bind_param("i", $id);
 $stmt->execute();
-$imovel = $stmt->get_result()->fetch_assoc();
-if (!$imovel) die("Imóvel não encontrado.");
+$res = $stmt->get_result();
+$imovel = $res->fetch_assoc();
+$stmt->close();
 
-// Prepara valores para a calculadora JS
-$valor_imovel_js = $imovel['valor'];
-$valor_entrada_sugerida = number_format($imovel['valor'] * 0.20, 2, '.', ''); // Sugere 20% de entrada
-
-// 2. BUSCA IMAGENS E VÍDEOS
-$sqlMedia = "SELECT caminho FROM IMAGEM_IMOVEL WHERE IMOVEL_idIMOVEL = ?";
-$stmtMedia = $conn->prepare($sqlMedia);
-
-if ($stmtMedia === false) {
-    error_log("Erro ao preparar busca de mídia: " . $conn->error);
-    $medias = [];
-} else {
-    $stmtMedia->bind_param("i", $id);
-    $stmtMedia->execute();
-    
-    $resultado = $stmtMedia->get_result();
-    
-    if ($resultado) {
-        $medias = $resultado->fetch_all(MYSQLI_ASSOC);
-    } else {
-        error_log("Erro ao obter resultado da busca de mídia: " . $stmtMedia->error);
-        $medias = [];
-    }
-    $stmtMedia->close();
+if (!$imovel) {
+    echo "Imóvel não encontrado.";
+    exit;
 }
 
+// Fundo por cidade (mesma lógica do buscar_imoveis)
+$bg_map = [
+    'Praia Grande' => 'imagem/planodefundopraiagrande.jpg',
+    'Mongaguá'     => 'imagem/planodefundomongagua.jpg',
+    'Itanhaém'     => 'imagem/planodefundoitanhaem.jpg',
+];
+$bg_img = 'imagem/FUNDO.jpeg';
+if (!empty($imovel['cidade'])) {
+    foreach ($bg_map as $nome_cidade => $img) {
+        if (stripos($imovel['cidade'], $nome_cidade) !== false) {
+            $bg_img = $img;
+            break;
+        }
+    }
+}
+
+// Buscar mídias
+$sqlMedia = "SELECT caminho FROM IMAGEM_IMOVEL WHERE IMOVEL_idIMOVEL = ?";
+$stmtMedia = $conn->prepare($sqlMedia);
+$medias = [];
+if ($stmtMedia !== false) {
+    $stmtMedia->bind_param("i", $id);
+    $stmtMedia->execute();
+    $resultMedia = $stmtMedia->get_result();
+    if ($resultMedia) {
+        while ($m = $resultMedia->fetch_assoc()) {
+            $medias[] = $m['caminho'];
+        }
+    }
+    $stmtMedia->close();
+} else {
+    error_log("Erro prepare IMAGEM_IMOVEL: " . $conn->error);
+}
+
+// FALLBACKS (3 imagens + 1 vídeo)
+$fallback_images = [
+    "https://images.pexels.com/photos/259588/pexels-photo-259588.jpeg",
+    "https://images.pexels.com/photos/106399/pexels-photo-106399.jpeg",
+    "https://images.pexels.com/photos/1396122/pexels-photo-1396122.jpeg"
+];
+$fallback_video = "https://www.w3schools.com/html/mov_bbb.mp4";
+
+// Monta slides
+$slides = [];
+if (!empty($medias)) {
+    foreach ($medias as $m) {
+        // normaliza caminhos locais: se não começa com http, usamos relativo direto
+        $slides[] = ['tipo' => 'img', 'src' => $m];
+    }
+} else {
+    foreach ($fallback_images as $img) $slides[] = ['tipo' => 'img', 'src' => $img];
+    $slides[] = ['tipo' => 'video', 'src' => $fallback_video];
+}
 
 // Página anterior
-$pagina_anterior = $_SERVER['HTTP_REFERER'] ?? 'buscar_imoveis.php';
+$pagina_anterior = filter_var($_SERVER['HTTP_REFERER'] ?? 'buscar_imoveis.php', FILTER_SANITIZE_URL);
+
+// Formata valores para JS
+$valor_imovel_js = floatval($imovel['valor'] ?? 0);
+$valor_entrada_sugerida = number_format($valor_imovel_js * 0.20, 2, '.', '');
+
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
-<title><?= htmlspecialchars($imovel['titulo'] ?: $imovel['tipo']) ?> - Detalhes</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title><?= htmlspecialchars($imovel['titulo'] ?: $imovel['tipo'] ?: "Imóvel #{$imovel['idIMOVEL']}") ?> - Detalhes</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <style>
-/* Slider */
-#slider { position: relative; overflow: hidden; border-radius: 1rem; }
-.slide { display: none; width: 100%; height: 500px; }
-.slide.active { display: block; }
-.slide img, .slide video { width: 100%; height: 100%; object-fit: cover; border-radius: 1rem; }
-#prev, #next {
-    position: absolute; top: 50%; transform: translateY(-50%);
-    background: rgba(0,0,0,0.5); color: white; padding: 0.5rem 1rem;
-    cursor: pointer; border-radius: 0.5rem; font-weight: bold; z-index:10;
-}
-#prev { left: 1rem; }
-#next { right: 1rem; }
-/* Estilo extra para a tabela da calculadora */
-#tabelaCompleta table { border-collapse: collapse; width: 100%; }
-#tabelaCompleta thead { background-color: #374151; }
-#tabelaCompleta th, #tabelaCompleta td { padding: 8px; border-bottom: 1px solid #374151; }
+@keyframes fadeUp { from { transform: translateY(24px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+.animate-fadeUp { animation: fadeUp 0.6s ease forwards; }
+.slider-btn { background: rgba(255,255,255,0.06); padding: 0.5rem; border-radius: 999px; backdrop-filter: blur(6px); }
+.slider-btn:hover { background: rgba(255,255,255,0.12); transform: scale(1.03); }
+.dot { width:10px; height:10px; border-radius:999px; background: rgba(255,255,255,0.12); }
+.dot.active { background: white; }
 </style>
 </head>
-<body class="bg-gray-900 text-gray-100 font-sans">
+<body class="text-gray-100 font-sans min-h-screen"
+      style="background-image: url('<?= $bg_img ?>'); background-size: cover; background-position: center; background-attachment: fixed;">
 
-<div class="max-w-7xl mx-auto px-4 py-8">
-    <a href="<?= htmlspecialchars($pagina_anterior) ?>" 
-        class="inline-block mb-6 px-5 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg shadow transition">
-        ⬅ Voltar
-    </a>
+<div class="bg-black/70 min-h-screen p-6">
+    <div class="max-w-6xl mx-auto">
+        <a href="<?= htmlspecialchars($pagina_anterior) ?>" class="inline-block mb-6 px-5 py-2 bg-gray-800/70 hover:bg-gray-800 rounded-xl shadow text-white">⬅ Voltar</a>
 
-    <div id="slider" class="mb-10 shadow-lg">
-        <?php foreach($medias as $index => $media): 
-            $caminho_completo = $media['caminho'];
-            
-            // --- AJUSTE CRÍTICO DE CAMINHO ---
-            // Se o caminho salvo no BD for 'uploads/imoveis/nome.jpg', e o diretório de arquivos for 'imoveis/uploads/imoveis',
-            // precisamos adicionar o prefixo 'imoveis/' se ele não estiver lá.
-            // Para simplificar e garantir que funcione, assumiremos que o prefixo necessário é 'imoveis/' se for um caminho local.
-            if (!str_contains($caminho_completo, 'http') && !str_starts_with($caminho_completo, 'imoveis/')) {
-                 // Concatena com o diretório RAIZ onde a pasta 'imoveis' está.
-                 // Ajuste o caminho base conforme a necessidade do seu projeto:
-                 // Se o arquivo detalhes.php está na RAIZ e o caminho de imagens é imoveis/uploads/imoveis/...
-                $caminho_completo = "imoveis/" . $caminho_completo;
-            }
-
-            $ext = pathinfo($caminho_completo, PATHINFO_EXTENSION);
-            $active = $index === 0 ? 'active' : '';
-        ?>
-        <div class="slide <?= $active ?>">
-            <?php if(in_array(strtolower($ext), ['mp4','webm','ogg'])): ?>
-                <video controls>
-                    <source src="<?= htmlspecialchars($caminho_completo) ?>" type="video/<?= $ext ?>">
-                    Seu navegador não suporta vídeo.
-                </video>
-            <?php else: ?>
-                <img src="<?= htmlspecialchars($caminho_completo) ?>" alt="Mídia do imóvel">
-            <?php endif; ?>
-        </div>
-        <?php endforeach; ?>
-        <div id="prev">&#10094;</div>
-        <div id="next">&#10095;</div>
-    </div>
-
-    <div class="grid lg:grid-cols-3 gap-8">
-        <div class="lg:col-span-2 bg-gray-800 p-6 rounded-2xl shadow-lg">
-            <h2 class="text-2xl font-bold mb-4">
-                <?= htmlspecialchars($imovel['titulo'] ?: $imovel['tipo']) ?> - 
-                <span class="text-green-400">R$ <?= number_format($imovel['valor'],2,',','.') ?></span>
-            </h2>
-            <p class="mb-3"><strong>Status:</strong> 
-                <span class="<?= $imovel['status']=='Disponivel' ? 'text-green-400' : 'text-red-400' ?>">
-                    <?= htmlspecialchars($imovel['status']) ?>
-                </span>
-            </p>
-            <p class="mb-3"><strong>Localização:</strong> 
-                <?= htmlspecialchars($imovel['rua']) ?>, <?= htmlspecialchars($imovel['bairro']) ?>, 
-                <?= htmlspecialchars($imovel['cidade']) ?>/<?= htmlspecialchars($imovel['estado']) ?>
-            </p>
-            <p class="mb-3"><strong>Quartos:</strong> <?= $imovel['qtd_quartos'] ?> |
-                <strong>Banheiros:</strong> <?= $imovel['qtd_banheiro'] ?> |
-                <strong>Vagas:</strong> <?= $imovel['qtd_vagas'] ?></p>
-            <p class="mb-3"><strong>Negociável:</strong> <?= htmlspecialchars($imovel['negociavel'] ?? 'Não') ?> |
-                <strong>Financiável:</strong> <?= htmlspecialchars($imovel['financiavel'] ?? 'Não') ?></p>
-            <p class="mb-3"><strong>Descrição:</strong><br>
-                <?= nl2br(htmlspecialchars($imovel['descricao'])) ?></p>
-        </div>
-
-        <div class="bg-gray-800 p-6 rounded-2xl shadow-lg">
-            
-            <h3 class="text-xl font-semibold mb-4">Solicitar Contato</h3>
-            <form method="POST" action="enviar_contato.php" class="space-y-3">
-                <input type="hidden" name="id_imovel" value="<?= $imovel['idIMOVEL'] ?>">
-                <input type="text" name="nome" placeholder="Seu nome" required
-                        class="w-full p-3 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-green-500 outline-none">
-                <input type="tel" name="telefone" placeholder="Telefone" required
-                        class="w-full p-3 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-green-500 outline-none">
-                <input type="email" name="email" placeholder="Email" required
-                        class="w-full p-3 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-green-500 outline-none">
-                <textarea name="mensagem" rows="4"
-                                class="w-full p-3 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-green-500 outline-none">Tenho interesse neste imóvel.</textarea>
-                <button type="submit"
-                        class="w-full py-3 bg-green-600 hover:bg-green-500 font-bold rounded-lg shadow-lg transition">
-                        Enviar Solicitação
-                </button>
-            </form>
-            
-            <div class="mt-8 pt-6 border-t border-gray-700">
-                <h3 class="text-xl font-semibold mb-4 text-center">Simulador de Financiamento</h3>
-                <div id="calculator-form" class="space-y-4">
-                    <div>
-                        <label class="block mb-1 text-sm">Valor do Imóvel (R$)</label>
-                        <input type="number" id="valorImovel" value="<?= number_format($valor_imovel_js, 2, '.', '') ?>" 
-                            min="1" readonly class="w-full p-2 rounded-lg bg-gray-700 border-gray-600 focus:outline-none cursor-not-allowed">
-                    </div>
-                    <div>
-                        <label class="block mb-1 text-sm">Valor da Entrada (R$)</label>
-                        <input type="number" id="valorEntrada" value="<?= $valor_entrada_sugerida ?>" 
-                            min="0" class="w-full p-2 rounded-lg bg-gray-700 focus:ring-blue-500 focus:ring-2 outline-none">
-                    </div>
-                    <div>
-                        <label class="block mb-1 text-sm">Taxa de Juros Anual (%)</label>
-                        <input type="number" id="taxaJurosAnual" value="9.5" step="0.01" min="0.01" max="25"
-                            class="w-full p-2 rounded-lg bg-gray-700 focus:ring-blue-500 focus:ring-2 outline-none">
-                    </div>
-                    <div>
-                        <label class="block mb-1 text-sm">Prazo (Meses)</label>
-                        <input type="number" id="prazoMeses" value="360" min="12" step="12" max="480"
-                            class="w-full p-2 rounded-lg bg-gray-700 focus:ring-blue-500 focus:ring-2 outline-none">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- SLIDER -->
+            <div class="lg:col-span-2 bg-gray-800/80 p-4 rounded-2xl shadow-2xl animate-fadeUp">
+                <div class="relative rounded-xl overflow-hidden">
+                    <div id="slider" class="w-full h-80 md:h-96 bg-black">
+                        <?php foreach ($slides as $i => $s): 
+                            $ext = pathinfo(parse_url($s['src'], PHP_URL_PATH), PATHINFO_EXTENSION);
+                            $isVideo = in_array(strtolower($ext), ['mp4','webm','ogg']) || $s['tipo'] === 'video';
+                        ?>
+                            <div class="slide <?= $i===0 ? 'block' : 'hidden' ?> w-full h-full" data-index="<?= $i ?>">
+                                <?php if ($isVideo): ?>
+                                    <video controls playsinline preload="metadata" class="w-full h-full object-cover">
+                                        <source src="<?= htmlspecialchars($s['src']) ?>">
+                                        Seu navegador não suporta vídeo.
+                                    </video>
+                                <?php else: ?>
+                                    <img src="<?= htmlspecialchars($s['src']) ?>" alt="Mídia <?= $i+1 ?>" class="w-full h-full object-cover">
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
                     </div>
 
-                    <button onclick="calcularFinanciamento()" class="w-full py-2 mt-4 rounded-lg font-bold bg-blue-600 hover:bg-blue-700 transition shadow-lg">
-                        Calcular Parcelas
-                    </button>
+                    <!-- controls -->
+                    <div class="absolute inset-y-0 left-4 flex items-center">
+                        <button id="prev" class="slider-btn text-white/90"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg></button>
+                    </div>
+                    <div class="absolute inset-y-0 right-4 flex items-center">
+                        <button id="next" class="slider-btn text-white/90"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg></button>
+                    </div>
+
+                    <!-- dots -->
+                    <div class="absolute left-0 right-0 bottom-4 flex justify-center gap-3">
+                        <?php foreach ($slides as $i => $_): ?>
+                            <div class="dot <?= $i===0 ? 'active' : '' ?>" data-dot="<?= $i ?>"></div>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
 
-                <div id="resultado" class="mt-4 pt-4 border-t border-gray-700 hidden">
-                    <h4 class="text-lg font-semibold mb-2">Resumo</h4>
-                    <div class="space-y-1 text-sm">
-                        <p>Financiado: <span id="resPrincipal" class="font-bold text-green-400"></span></p>
-                        <p>Parcela Fixa: <span id="resParcela" class="font-bold text-yellow-400"></span></p>
-                    </div>
-                    <button onclick="$('#tabelaCompleta').toggleClass('hidden')" class="text-xs text-gray-400 hover:text-white mt-2">
-                        Ver Amortização Completa (Tabela Price)
-                    </button>
+                <!-- Detalhes principais -->
+                <div class="p-5 mt-6 bg-gray-900/50 rounded-xl border border-gray-800">
+                    <h1 class="text-2xl font-bold mb-2"><?= htmlspecialchars($imovel['titulo'] ?: $imovel['tipo'] ?: "Imóvel #{$imovel['idIMOVEL']}") ?></h1>
+                    <div class="text-blue-300 text-xl font-semibold mb-3">R$ <?= number_format(floatval($imovel['valor']),2,',','.') ?></div>
 
-                    <div id="tabelaCompleta" class="overflow-y-auto max-h-48 rounded-lg mt-3 hidden">
-                        <table class="min-w-full text-xs text-left">
-                            <thead class="bg-gray-700 sticky top-0">
-                                <tr>
-                                    <th class="p-1">#</th>
-                                    <th class="p-1">Juros</th>
-                                    <th class="p-1">Amort.</th>
-                                    <th class="p-1">Saldo Dev.</th>
-                                </tr>
-                            </thead>
+                    <div class="text-gray-300 mb-3">
+                        <strong>Endereço:</strong> <?= htmlspecialchars($imovel['rua']) ?>, <?= htmlspecialchars($imovel['bairro']) ?>, <?= htmlspecialchars($imovel['cidade']) ?> / <?= htmlspecialchars($imovel['estado']) ?>
+                    </div>
+
+                    <div class="flex gap-4 text-gray-300 mb-4">
+                        <div><strong>Quartos:</strong> <?= intval($imovel['qtd_quartos']) ?></div>
+                        <div><strong>Banheiros:</strong> <?= intval($imovel['qtd_banheiro']) ?></div>
+                        <div><strong>Vagas:</strong> <?= intval($imovel['qtd_vagas']) ?></div>
+                    </div>
+
+                    <div class="text-gray-300 leading-relaxed">
+                        <strong>Descrição:</strong>
+                        <div class="mt-2 bg-gray-800/40 p-4 rounded"><?= nl2br(htmlspecialchars($imovel['descricao'])) ?></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LATERAL: contato + simulador -->
+            <div class="bg-gray-800/80 p-6 rounded-2xl shadow-2xl animate-fadeUp">
+                <h2 class="text-xl font-semibold mb-4">Solicitar Contato</h2>
+                <form method="POST" action="enviar_contato.php" class="space-y-3">
+                    <input type="hidden" name="id_imovel" value="<?= intval($imovel['idIMOVEL']) ?>">
+                    <input name="nome" placeholder="Seu nome" required class="w-full p-3 rounded bg-gray-700/60 text-white outline-none">
+                    <input name="telefone" placeholder="Telefone" required class="w-full p-3 rounded bg-gray-700/60 text-white outline-none">
+                    <input name="email" type="email" placeholder="Email" required class="w-full p-3 rounded bg-gray-700/60 text-white outline-none">
+                    <textarea name="mensagem" rows="3" class="w-full p-3 rounded bg-gray-700/60 text-white outline-none">Tenho interesse neste imóvel.</textarea>
+                    <button type="submit" class="w-full py-3 bg-blue-500/60 hover:bg-blue-500 rounded-md font-semibold">Enviar Solicitação</button>
+                </form>
+
+                <hr class="my-5 border-gray-700">
+
+                <h3 class="text-lg font-semibold mb-3">Simulador de Financiamento</h3>
+
+                <label class="text-sm text-gray-300">Valor do Imóvel (R$)</label>
+                <input id="valorImovel" readonly value="<?= number_format($valor_imovel_js,2,'.','') ?>" class="w-full p-2 rounded bg-gray-700/60 text-white mb-3">
+
+                <label class="text-sm text-gray-300">Valor da Entrada (R$)</label>
+                <input id="valorEntrada" value="<?= $valor_entrada_sugerida ?>" class="w-full p-2 rounded bg-gray-700/60 text-white mb-3">
+
+                <label class="text-sm text-gray-300">Taxa Anual (%)</label>
+                <input id="taxaJurosAnual" value="9.5" step="0.01" class="w-full p-2 rounded bg-gray-700/60 text-white mb-3">
+
+                <label class="text-sm text-gray-300">Prazo (meses)</label>
+                <input id="prazoMeses" value="360" class="w-full p-2 rounded bg-gray-700/60 text-white mb-3">
+
+                <button onclick="calcularFinanciamento()" type="button" class="w-full py-2 bg-green-600 hover:bg-green-500 rounded-md font-semibold">Calcular Parcelas</button>
+
+                <div id="resultado" class="mt-4 hidden">
+                    <h4 class="font-semibold">Resumo</h4>
+                    <p>Financiado: <span id="resPrincipal" class="font-bold text-green-300"></span></p>
+                    <p>Parcela Fixa: <span id="resParcela" class="font-bold text-yellow-300"></span></p>
+                    <button onclick="document.getElementById('tabelaCompleta').classList.toggle('hidden')" class="text-sm text-gray-400 mt-2">Ver Amortização</button>
+
+                    <div id="tabelaCompleta" class="hidden mt-3 max-h-48 overflow-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-800 sticky top-0"><tr><th class="p-2">#</th><th class="p-2">Juros</th><th class="p-2">Amort.</th><th class="p-2">Saldo</th></tr></thead>
                             <tbody id="tabelaAmortizacao" class="divide-y divide-gray-700"></tbody>
                         </table>
                     </div>
                 </div>
+
             </div>
-            </div>
+        </div>
     </div>
 </div>
 
 <script>
-// --- SLIDER JS ---
+// Slider logic
+const slides = Array.from(document.querySelectorAll('#slider .slide'));
+const dots  = Array.from(document.querySelectorAll('[data-dot]'));
 let current = 0;
-const slides = $('.slide');
-const total = slides.length;
 
-function showSlide(index){
-    slides.removeClass('active');
-    slides.eq(index).addClass('active');
+function showSlide(i) {
+    if (!slides.length) return;
+    slides.forEach(s => s.classList.add('hidden'));
+    dots.forEach(d => d.classList.remove('active'));
+    current = (i + slides.length) % slides.length;
+    slides[current].classList.remove('hidden');
+    dots[current].classList.add('active');
 }
-$('#next').click(()=>{ current = (current+1)%total; showSlide(current); });
-$('#prev').click(()=>{ current = (current-1+total)%total; showSlide(current); });
+document.getElementById('next').addEventListener('click', ()=> showSlide(current+1));
+document.getElementById('prev').addEventListener('click', ()=> showSlide(current-1));
+dots.forEach(d => d.addEventListener('click', (e)=> showSlide(parseInt(e.currentTarget.getAttribute('data-dot')))));
 
-// Garante que o slider comece no primeiro item ao carregar
-if(total > 0) showSlide(0);
+// init
+showSlide(0);
 
-// --- CALCULATOR JS (Lógica da Tabela Price) ---
-
-// ... (Restante do JavaScript da calculadora é o mesmo)
-const formatarMoeda = (valor) => {
-    if (isNaN(valor)) return 'R$ 0,00';
-    return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Finance calculator
+const formatarMoeda = (v) => {
+    return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 };
 
-function calcularFinanciamento() {
-    // 1. Coleta e conversão de Inputs
-    const valorImovel = parseFloat($('#valorImovel').val());
-    const valorEntrada = parseFloat($('#valorEntrada').val());
-    const taxaJurosAnual = parseFloat($('#taxaJurosAnual').val());
-    const prazoMeses = parseInt($('#prazoMeses').val());
+function calcularFinanciamento(){
+    const valorImovel = parseFloat(document.getElementById('valorImovel').value) || 0;
+    const valorEntrada = parseFloat(document.getElementById('valorEntrada').value) || 0;
+    const taxaAnual = parseFloat(document.getElementById('taxaJurosAnual').value) || 0;
+    const prazo = parseInt(document.getElementById('prazoMeses').value) || 0;
 
-    if (isNaN(valorImovel) || isNaN(valorEntrada) || isNaN(taxaJurosAnual) || isNaN(prazoMeses) || prazoMeses <= 0) {
-        // Substituído alert() por log no console, conforme diretrizes
-        console.error("Erro: Preencha todos os campos da calculadora com valores válidos.");
-        return;
-    }
-    
+    if (valorImovel <= 0 || prazo <= 0) return console.error("Valores inválidos");
     if (valorEntrada >= valorImovel) {
-        console.error("Erro: O valor da entrada não pode ser maior ou igual ao valor do imóvel.");
-        $('#resultado').addClass('hidden');
+        console.error("Entrada >= valor");
+        document.getElementById('resultado').classList.add('hidden');
         return;
     }
 
-    // 2. Cálculos de Base
     const principal = valorImovel - valorEntrada;
-    const taxaMensal = (taxaJurosAnual / 100) / 12; // Taxa i
-    const n = prazoMeses; // Número de períodos
-
-    // 3. Fórmula da Tabela Price (Parcela Constante)
-    let parcelaFixa;
-    
-    if (taxaMensal === 0) {
-        // Se a taxa for zero, a parcela é apenas a amortização
-        parcelaFixa = principal / n;
-    } else {
-        const fator = Math.pow(1 + taxaMensal, n);
-        parcelaFixa = principal * (taxaMensal * fator) / (fator - 1); 
+    const i = (taxaAnual/100)/12;
+    const n = prazo;
+    let parcela;
+    if (i === 0) parcela = principal / n;
+    else {
+        const fator = Math.pow(1+i, n);
+        parcela = principal * (i * fator) / (fator - 1);
     }
-    
-    // Arredondamento da parcela para duas casas decimais
-    parcelaFixa = Math.round(parcelaFixa * 100) / 100;
+    parcela = Math.round(parcela*100)/100;
 
-    // 4. Montar a Tabela de Amortização
-    let saldoDevedor = principal;
-    let tabelaHTML = '';
-
-    for (let i = 1; i <= n; i++) {
-        const juros = saldoDevedor * taxaMensal;
-        let amortizacao = parcelaFixa - juros;
-        
-        // Aplica o ajuste de arredondamento na última parcela para zerar o saldo
-        // Usamos um pequeno epsilon (0.01, 0.1, etc.) ou ajuste direto
-        if (i === n) {
-            // Garante que a última amortização zere o saldo
-            amortizacao = saldoDevedor; 
-            parcelaFixa = juros + amortizacao; // Recalcula a última parcela
-            saldoDevedor = 0;
+    // tabela
+    let saldo = principal;
+    let tbody = '';
+    for (let k=1;k<=n;k++){
+        const juros = saldo * i;
+        let amort = parcela - juros;
+        if (k === n) {
+            amort = saldo;
+            parcela = juros + amort;
+            saldo = 0;
         } else {
-            saldoDevedor -= amortizacao;
+            saldo -= amort;
+            if (saldo < 0.01) saldo = 0;
         }
-        
-        // Garante que o saldo devedor não fique negativo devido a erros de ponto flutuante
-        if (saldoDevedor < 0.01 && saldoDevedor > -0.01) {
-            saldoDevedor = 0;
-        }
-
-        tabelaHTML += `
-            <tr class="hover:bg-gray-700">
-                <td class="p-1">${i}</td>
-                <td class="p-1 text-red-300">${formatarMoeda(juros)}</td>
-                <td class="p-1 text-green-300">${formatarMoeda(amortizacao)}</td>
-                <td class="p-1">${formatarMoeda(saldoDevedor)}</td>
-            </tr>
-        `;
+        tbody += `<tr class="hover:bg-gray-800"><td class="p-2">${k}</td><td class="p-2 text-red-300">${formatarMoeda(juros)}</td><td class="p-2 text-green-300">${formatarMoeda(amort)}</td><td class="p-2">${formatarMoeda(saldo)}</td></tr>`;
+        if (k>500) break;
     }
 
-    // 5. Exibir Resultados
-    $('#resPrincipal').text(formatarMoeda(principal));
-    $('#resParcela').text(formatarMoeda(parcelaFixa));
-    $('#tabelaAmortizacao').html(tabelaHTML);
-    
-    $('#resultado').removeClass('hidden');
+    document.getElementById('resPrincipal').textContent = formatarMoeda(principal);
+    document.getElementById('resParcela').textContent = formatarMoeda(parcela);
+    document.getElementById('tabelaAmortizacao').innerHTML = tbody;
+    document.getElementById('resultado').classList.remove('hidden');
 }
 </script>
 </body>

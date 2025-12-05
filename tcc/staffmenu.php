@@ -97,7 +97,7 @@ body::before{content:"";position:fixed;top:0;left:0;right:0;bottom:0;background:
                 <a href="imoveis/listar.php" class="py-3 px-5 rounded-xl font-bold btn-glow shadow-md text-center">Imóveis</a>
                 <a href="visitas/listar.php" class="py-3 px-5 rounded-xl font-bold btn-glow shadow-md text-center">Visitas</a>
                 <a href="propostas/listar.php" class="py-3 px-5 rounded-xl font-bold btn-glow shadow-md text-center">Propostas</a>
-                <a href="logins.php" class="py-3 px-5 rounded-xl font-bold btn-glow shadow-md text-center">Histórico/Logins</a>
+                <a href="logins.php" class="py-3 px-5 rounded-xl font-bold btn-glow shadow-md text-center">Logins</a>
             
             <?php elseif ($_SESSION['tipo'] === 'GESTOR'): ?>
                 <a href="corretor/listar.php" class="py-3 px-5 rounded-xl font-bold btn-glow shadow-md text-center">Corretores</a>
