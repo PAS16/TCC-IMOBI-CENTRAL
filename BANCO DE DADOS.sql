@@ -122,32 +122,63 @@ CREATE TABLE IF NOT EXISTS `PROPOSTA` (
         REFERENCES `VISITA`(`idVISITA`, `CLIENTE_idCLIENTE`) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- -----------------------------------------------------
--- MENSAGENS DE SUPORTE
--- -----------------------------------------------------
-CREATE TABLE IF NOT EXISTS `mensagens_suporte` (
-    `id` INT AUTO_INCREMENT PRIMARY KEY,
-    `nome` VARCHAR(100) NOT NULL,
-    `email` VARCHAR(100) NOT NULL,
-    `telefone` VARCHAR(20),
-    `mensagem` TEXT NOT NULL,
-    `status` ENUM('Pendente','Atendido') DEFAULT 'Pendente',
-    `data_criacao` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
+-- ---------------------------
+-- Inserindo USUÁRIOS
+-- ---------------------------
+INSERT INTO `USUARIO` (`usuario`, `senha`, `tipo`, `email`) VALUES
+('admin1', 'senha123', 'admin', 'admin1@imobiliaria.com'),
+('gestor1', 'senha123', 'GESTOR', 'gestor1@imobiliaria.com'),
+('corretor1', 'senha123', 'CORRETOR', 'corretor1@imobiliaria.com'),
+('corretor2', 'senha123', 'CORRETOR', 'corretor2@imobiliaria.com');
 
--- -----------------------------------------------------
--- HISTORICO DE AÇÕES (CORRIGIDA)
--- -----------------------------------------------------
-CREATE TABLE IF NOT EXISTS `HISTORICO` (
-    `idHISTORICO` INT AUTO_INCREMENT PRIMARY KEY,
-    `usuario_idUSUARIO` INT NOT NULL,
-    `tabela` VARCHAR(50) NOT NULL,
-    -- Ações padronizadas para o código PHP (INSERT, UPDATE, DELETE) mais login/logout
-    `acao` ENUM('INSERT','UPDATE','DELETE','login','logout') NOT NULL,
-    `registro_id` INT NOT NULL,
-    `dados_anteriores` TEXT,
-    -- CORRIGIDO: Coerente com o PHP
-    `dados_atuais` TEXT,
-    `data_hora` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (`usuario_idUSUARIO`) REFERENCES `USUARIO`(`idUSUARIO`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+-- ---------------------------
+-- Inserindo GESTORES
+-- ---------------------------
+INSERT INTO `GESTOR` (`USUARIO_idUSUARIO`, `nome`) VALUES
+(2, 'Carlos Silva');
+
+-- ---------------------------
+-- Inserindo CORRETORES
+-- ---------------------------
+INSERT INTO `CORRETOR` (`USUARIO_idUSUARIO`, `nome`, `creci`, `telefone`) VALUES
+(3, 'Ana Pereira', 'CRECI12345', '(11) 98765-4321'),
+(4, 'Bruno Santos', 'CRECI67890', '(21) 99876-5432');
+
+-- ---------------------------
+-- Inserindo CLIENTES
+-- ---------------------------
+INSERT INTO `CLIENTE` (`nome`, `cpf`, `telefone`, `email`) VALUES
+('João Almeida', '12345678901', '(11) 91234-5678', 'joao@gmail.com'),
+('Mariana Costa', '10987654321', '(21) 92345-6789', 'mariana@gmail.com');
+
+-- ---------------------------
+-- Inserindo PROPRIETÁRIOS
+-- ---------------------------
+INSERT INTO `PROPRIETARIO` (`nome`, `cpf`, `telefone`, `email`) VALUES
+('Pedro Oliveira', '11122233344', '(11) 93456-7890', 'pedro@imoveis.com'),
+('Luiza Fernandes', '55566677788', '(21) 94567-8901', 'luiza@imoveis.com');
+
+-- ---------------------------
+-- Inserindo IMÓVEIS
+-- ---------------------------
+INSERT INTO `IMOVEL` (`PROPRIETARIO_idPROPRIETARIO`, `titulo`, `tipo`, `rua`, `numero`, `bairro`, `cidade`, `estado`, `valor`, `descricao`, `status`, `qtd_quartos`, `qtd_banheiro`, `qtd_vagas`, `negociavel`, `financiavel`) VALUES
+(1, 'Apartamento Moderno', 'Apartamento', 'Rua das Flores', '123', 'Centro', 'Mongagua', 'SP', 350000.00, 'Apartamento bem localizado, próximo a comércio e transporte.', 'Disponivel', 2, 2, 1, 'Sim', 'Sim'),
+(2, 'Casa Espaçosa', 'Casa', 'Av. Brasil', '456', 'Jardim América', 'Praia Grande', 'RJ', 750000.00, 'Casa com quintal grande e garagem para 2 carros.', 'Disponivel', 3, 3, 2, 'Não', 'Sim');
+
+-- ---------------------------
+-- Inserindo IMAGENS DE IMÓVEIS
+-- ---------------------------
+
+-- ---------------------------
+-- Inserindo VISITAS
+-- ---------------------------
+INSERT INTO `VISITA` (`CORRETOR_idCORRETOR`, `IMOVEL_idIMOVEL`, `CLIENTE_idCLIENTE`, `data_visita`, `observacoes`) VALUES
+(1, 1, 1, '2025-12-10', 'Cliente interessado em apartamento de 2 quartos.'),
+(2, 2, 2, '2025-12-12', 'Cliente quer visitar casa com quintal.');
+
+-- ---------------------------
+-- Inserindo PROPOSTAS
+-- ---------------------------
+INSERT INTO `PROPOSTA` (`VISITA_idVISITA`, `VISITA_CLIENTE_idCLIENTE`, `valor_ofertado`, `data_proposta`, `status`) VALUES
+(1, 1, 340000.00, '2025-12-11', 'Pendente'),
+(2, 2, 740000.00, '2025-12-13', 'Aceita');
